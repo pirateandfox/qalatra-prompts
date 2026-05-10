@@ -2,11 +2,11 @@
 
 ## How to Use This File
 
-Your deployment CLAUDE.md tells you which repos this instance handles. For each task you process:
+You are a **per-project pipeline agent**. Your CLAUDE.md tells you your repo name and config path.
 
-1. Extract the repo name from `task.agent_path` (e.g. `…/biztobiz/agents/execute-plan` → `biztobiz`)
-2. Read `~/IdeaProjects/{repo}/agents/pipeline-config.md`
-3. Wherever this document references `{CONFIG.X}`, substitute the value from that config
+1. Read `{CONFIG.repo_path}/agents/pipeline-config.md`
+2. Wherever this document references `{CONFIG.X}`, substitute the value from that config
+3. Only process tasks belonging to your repo — never touch tasks from other repos
 
 Refer to `pipeline-architecture.md` if you need to understand the system or decide where a fix belongs.
 
@@ -28,8 +28,9 @@ Never fix in a deployment wrapper what belongs in canonical. That's how pipeline
 
 ## The Pipeline Lifecycle
 
+Plans are created by PM agents and manually approved by Justin before dispatch. This pipeline agent only handles tasks once they are in execution.
+
 ```
-[Qalatra] agent_path contains "agents/plan"          → Stage 1: Plan
 [Manual gate] Justin reviews plan, dispatches to execute-plan
 [Qalatra] agent_path contains "agents/execute-plan"  → Stage 3: In Flight (from plan)
 [Qalatra] agent_path contains "agents/execute-task"  → Stage 2a: In Flight (direct)
@@ -39,7 +40,6 @@ Never fix in a deployment wrapper what belongs in canonical. That's how pipeline
 
 | agent_path fragment | Stage |
 |---|---|
-| `agents/plan` | 1 |
 | `agents/execute-task` | 2a |
 | `agents/execute-plan` | 3 |
 
@@ -53,7 +53,9 @@ Never fix in a deployment wrapper what belongs in canonical. That's how pipeline
 
 ## Run Loop
 
-### Step 0 — Health Check
+### Step 0 — Load Config and Health Check
+
+**First:** Read `{CONFIG.repo_path}/agents/pipeline-config.md`. This file defines all `{CONFIG.*}` values used throughout this document. `{CONFIG.repo_name}` is the short repo name (e.g. `biztobiz`), provided in your CLAUDE.md wrapper.
 
 All three systems must be reachable before the pipeline runs.
 
@@ -84,22 +86,17 @@ create_task({
 
 ### Step 1 — Pull Staged Tasks
 
-Run in parallel:
+Run in parallel — scoped to this repo only:
 ```
-get_tasks_by_agent({ agent: "agents/plan" })          → Stage 1 tasks
-get_tasks_by_agent({ agent: "agents/execute-plan" })  → Stage 3 tasks
-get_tasks_by_agent({ agent: "agents/execute-task" })  → Stage 2a tasks
+get_tasks_by_agent({ agent: "{CONFIG.repo_name}/agents/execute-plan" })  → Stage 3 tasks
+get_tasks_by_agent({ agent: "{CONFIG.repo_name}/agents/execute-task" })  → Stage 2a tasks
 ```
 
-Use full path fragments to avoid false-positive matches on `assigned_agent` strings. **Never pass `context:`** — this pipeline is cross-project.
+Using the repo-prefixed fragment ensures this agent only sees its own tasks, never another repo's.
 
-### Step 2 — Classify and Load Config
+### Step 2 — Classify Tasks
 
-For each task:
-1. Determine stage from `agent_path`
-2. Extract repo name from `agent_path`
-3. Read `~/IdeaProjects/{repo}/agents/pipeline-config.md`
-4. Note tasks in ambiguous or unconfigured state
+For each task returned, determine stage from `agent_path`. Config is already loaded (Step 0 prerequisite).
 
 ### Step 3 — Dispatch Stage Handlers
 
@@ -112,22 +109,6 @@ Write run log to `{DEPLOYMENT_OUTPUT_PATH}/YYYY-MM-DD-HH-MM-pipeline.md` (define
 ---
 
 ## Stage Handlers
-
-### Stage 1: Code Planner
-
-**Status:** ACTIVE — autonomous dispatch enabled.
-
-Pull in parallel:
-- `get_tasks_by_agent({ agent: "plan", job_status: "none" })` → unstarted
-- `get_tasks_by_agent({ agent: "plan", job_status: "failed" })` → failed
-- `get_tasks_by_agent({ agent: "plan", job_status: "running" })` → log count only
-
-**Actions:**
-- `job_status: "none"` → check `get_task_notes({ task_id })` for an `author: agent` note with no `author: user` note after it — if so, skip (`STAGE_1_WAITING_ANSWERS`). Otherwise `queue_agent_job({ task_id })`.
-- `failed` → log `STAGE_1_FAILED`, surface in Needs Attention. Do NOT auto-retry.
-- `running` / `done` → `STAGE_1_SKIP`
-
----
 
 ### Stage 2a: Coder (from task)
 
