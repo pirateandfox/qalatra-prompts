@@ -330,7 +330,7 @@ Entry: FlightDesk status is `REVIEW_RUNNING`. Run on every tick; allow ≥15 min
 | Check | Detection | Action |
 |---|---|---|
 | SonarCloud | `integrationSlug` contains `"sonar"`, `status: "FAILED"` | `get_task_prompt({ taskId, promptType: "review" })` → inject |
-| Copilot | `integrationSlug: "github-reviews"`, `status: "FAILED"` — **verify** with `gh pr view --json reviews` that state is `CHANGES_REQUESTED` (not just `COMMENTED`) | Same as SonarCloud |
+| Copilot | `integrationSlug: "github-reviews"`, `status: "FAILED"` — **verify** with `gh pr view --json reviews`. Both `CHANGES_REQUESTED` **and** `COMMENTED` are blocking — `COMMENTED` means open unresolved comments that must be addressed. Only treat as non-blocking if the reviews array is empty or all reviews are `APPROVED`/`DISMISSED`. | `get_task_prompt({ taskId, promptType: "review" })` → inject into session |
 | Claude Code review | `integrationSlug: "claude-review"` | Read comment → craft custom inject (security: always; missing tests: yes; optimizations: case by case; style: skip) |
 | All passing | No FAILED checks | QA_READY path (see below) |
 
