@@ -401,7 +401,11 @@ Default to flagging. This runs autonomously — there is no cost to one more inj
 2. If `{CONFIG.source_field_preview_url}` is set → `get_preview_status({ taskId })` and write the returned URL to `{CONFIG.source_field_preview_url}` on the source task (same Notion update pattern as other fields). Skip silently if no URL is returned.
 3. If `{CONFIG.source_field_status_column}` is set → set it to `{CONFIG.source_status_in_staging}` on the source task.
 4. Update source task to ready-for-testing (see Source System Updates)
-5. Complete the Qalatra task: `complete_task(qalatra_task_id)`. The work is done — the task is in staging awaiting client sign-off. Client approval triggers the deploy pipeline (Stage 4b); change requests spawn a new task. No value in keeping this open in the inbox.
+5. Surface Qalatra task for human review:
+   ```
+   update_task({ task_id, task_type: "task", agent_path: "", inbox: true, title: "Review: " + original_title, ai_context: "Ready for review — in staging. Preview URL in Notion." })
+   ```
+   Prepending "Review: " makes it clear this is a review action, not an in-flight coding task. Justin marks it done after reviewing; the client can approve independently via Notion.
 6. Log `STAGE_4_READY`
 
 ---
