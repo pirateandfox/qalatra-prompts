@@ -377,14 +377,16 @@ Reason through all three inputs together:
 **What to flag:**
 - Bugs, security issues, incorrect logic
 - Missing required functionality explicitly stated in the spec
-- Significant gaps flagged in the Claude Code review
-- Unresolved review threads with substantive feedback
+- Anything flagged in the Claude Code review — optimizations, code quality improvements, edge cases, missing tests, performance concerns, unclear naming, anything the reviewer thought worth mentioning
+- Unresolved inline comments or review threads
+- Any suggestion that would make the code meaningfully better, even if not strictly required
 
 **What to skip:**
-- Pure style suggestions
-- Minor optimizations with no functional impact
-- Suggestions the session already addressed in a subsequent commit
-- Subjective preferences without clear correctness implications
+- Suggestions the session already addressed in a subsequent commit (verify before skipping)
+- Pure whitespace or formatting preferences with zero functional or readability benefit
+- Duplicate comments that have already been addressed elsewhere in the thread
+
+Default to flagging. This runs autonomously — there is no cost to one more inject and a better result is always worth it.
 
 **Decision:**
 - **Issues found** → Compose a targeted inject listing each issue with its source (e.g., *"The Claude Code review on GitHub flagged a missing null check at `file.ts:42` — please address this. Also, the spec asked for X but the diff only implements Y."*). Wait for session `ready`, then re-enter Stage 4 on the next tick.
