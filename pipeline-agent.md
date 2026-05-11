@@ -340,12 +340,13 @@ Entry: FlightDesk status is `REVIEW_RUNNING`. Run on every tick; allow ≥15 min
 
 **When all checks pass (QA_READY):**
 1. If `{CONFIG.qa_reviewer_id}` is set → `update_task({ taskId, qaAssigneeId: "{CONFIG.qa_reviewer_id}" })`
-2. Update source task to ready-for-testing (see Source System Updates)
-3. Surface Qalatra task back to human inbox:
+2. If `{CONFIG.source_field_preview_url}` is set → `get_preview_status({ taskId })` and write the returned URL to `{CONFIG.source_field_preview_url}` on the source task (same Notion update pattern as other fields). Skip silently if no URL is returned.
+3. Update source task to ready-for-testing (see Source System Updates)
+4. Surface Qalatra task back to human inbox:
    ```
    update_task({ task_id, task_type: "task", agent_path: "", inbox: true, ai_context: "This task is ready for human review" })
    ```
-4. Log `STAGE_4_READY`
+5. Log `STAGE_4_READY`
 
 ---
 
