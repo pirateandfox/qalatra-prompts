@@ -331,14 +331,68 @@ Entry: FlightDesk status is `REVIEW_RUNNING`. Run on every tick; allow ≥15 min
 |---|---|---|
 | SonarCloud | `integrationSlug` contains `"sonar"`, `status: "FAILED"` | `get_task_prompt({ taskId, promptType: "review" })` → inject |
 | Copilot | `integrationSlug: "github-reviews"`, `status: "FAILED"` — **verify** with `gh pr view --json reviews`. Both `CHANGES_REQUESTED` **and** `COMMENTED` are blocking — `COMMENTED` means open unresolved comments that must be addressed. Only treat as non-blocking if the reviews array is empty or all reviews are `APPROVED`/`DISMISSED`. | `get_task_prompt({ taskId, promptType: "review" })` → inject into session |
-| Claude Code review | `integrationSlug: "claude-review"` | Read comment → craft custom inject (security: always; missing tests: yes; optimizations: case by case; style: skip) |
-| All passing | No FAILED checks | QA_READY path (see below) |
+| All automated checks passing | No FAILED checks from SonarCloud or Copilot | Run Intelligence Check (see below) |
+
+**Note on FlightDesk `claude-review` check:** FlightDesk surfaces this as a pass/fail signal only — it does not expose the full review body. The Intelligence Check reads the complete review text directly from GitHub.
 
 **SonarQube PENDING display bug:** If SonarQube is the only check still `PENDING` and all others have settled, check the SonarCloud proxy:
 - `qualityGatePassed: true` → treat as passing
 - `qualityGatePassed: false` → inject review prompt
 
-**When all checks pass (QA_READY):**
+---
+
+### Stage 4: Intelligence Check
+
+Runs after all automated checks (SonarCloud, Copilot, CI) are green. This is the substantive gate before declaring QA_READY — it reads everything GitHub has and compares the implementation against the original spec.
+
+**Step 1 — Read all GitHub feedback:**
+```bash
+# All reviews with full body (includes the long-form Claude Code review)
+gh api repos/{CONFIG.github_slug}/pulls/{prNumber}/reviews
+# Inline review comments
+gh api repos/{CONFIG.github_slug}/pulls/{prNumber}/comments
+# General PR comments
+gh api repos/{CONFIG.github_slug}/issues/{prNumber}/comments
+```
+The Claude Code review is typically a review submitted by a bot (e.g. `claude[bot]` or a GitHub Actions actor). Read its full body — FlightDesk does not expose this text.
+
+**Step 2 — Read original spec:**
+Fetch the source task (Notion/Linear/Asana) and extract the full task description and any requirements in the page body.
+
+**Step 3 — Read the branch diff:**
+```bash
+git fetch origin
+git diff origin/{CONFIG.base_branch}...origin/<branchName> --stat
+git diff origin/{CONFIG.base_branch}...origin/<branchName>
+```
+For large diffs, read `--stat` first, then targeted per-file diffs.
+
+**Step 4 — Assess:**
+Reason through all three inputs together:
+
+1. **Spec vs. implementation:** Does the diff actually address what was asked? Are there explicit requirements in the spec that aren't reflected in the changes?
+2. **Claude Code review:** Does the review flag any bugs, security issues, incorrect logic, missing edge cases, or significant functional gaps? Read the full text — do not rely on the pass/fail status alone.
+3. **Unresolved comments:** Are there inline review comments or general PR comments that haven't been addressed in a follow-up commit or reply?
+
+**What to flag:**
+- Bugs, security issues, incorrect logic
+- Missing required functionality explicitly stated in the spec
+- Significant gaps flagged in the Claude Code review
+- Unresolved review threads with substantive feedback
+
+**What to skip:**
+- Pure style suggestions
+- Minor optimizations with no functional impact
+- Suggestions the session already addressed in a subsequent commit
+- Subjective preferences without clear correctness implications
+
+**Decision:**
+- **Issues found** → Compose a targeted inject listing each issue with its source (e.g., *"The Claude Code review on GitHub flagged a missing null check at `file.ts:42` — please address this. Also, the spec asked for X but the diff only implements Y."*). Wait for session `ready`, then re-enter Stage 4 on the next tick.
+- **All good** → Proceed to QA_READY.
+
+---
+
+**When Intelligence Check passes (QA_READY):**
 1. If `{CONFIG.qa_reviewer_id}` is set → `update_task({ taskId, qaAssigneeId: "{CONFIG.qa_reviewer_id}" })`
 2. If `{CONFIG.source_field_preview_url}` is set → `get_preview_status({ taskId })` and write the returned URL to `{CONFIG.source_field_preview_url}` on the source task (same Notion update pattern as other fields). Skip silently if no URL is returned.
 3. If `{CONFIG.source_field_status_column}` is set → set it to `{CONFIG.source_status_in_staging}` on the source task.
@@ -347,7 +401,7 @@ Entry: FlightDesk status is `REVIEW_RUNNING`. Run on every tick; allow ≥15 min
    ```
    update_task({ task_id, task_type: "task", agent_path: "", inbox: true, ai_context: "This task is ready for human review" })
    ```
-5. Log `STAGE_4_READY`
+6. Log `STAGE_4_READY`
 
 ---
 
