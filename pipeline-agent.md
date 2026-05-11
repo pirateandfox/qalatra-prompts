@@ -331,9 +331,10 @@ Entry: FlightDesk status is `REVIEW_RUNNING`. Run on every tick; allow ≥15 min
 |---|---|---|
 | SonarCloud | `integrationSlug` contains `"sonar"`, `status: "FAILED"` | `get_task_prompt({ taskId, promptType: "review" })` → inject |
 | Copilot | `integrationSlug: "github-reviews"`, `status: "FAILED"` — **verify** with `gh pr view --json reviews`. Both `CHANGES_REQUESTED` **and** `COMMENTED` are blocking — `COMMENTED` means open unresolved comments that must be addressed. Only treat as non-blocking if the reviews array is empty or all reviews are `APPROVED`/`DISMISSED`. | `get_task_prompt({ taskId, promptType: "review" })` → inject into session |
-| All automated checks passing | No FAILED checks from SonarCloud or Copilot | Run Intelligence Check (see below) |
+| Claude Code review | `integrationSlug: "claude-review"`, `status: "FAILED"` | `get_task_prompt({ taskId, promptType: "review" })` → inject. FD fetches the full comment via its proxy, instructs the agent to address it, and expects `POST /proxy/claude-feedback/acknowledge` when done. Do not bypass this flow. |
+| All automated checks passing | No FAILED checks | Run Intelligence Check (see below) |
 
-**Note on FlightDesk `claude-review` check:** FlightDesk surfaces this as a pass/fail signal only — it does not expose the full review body. The Intelligence Check reads the complete review text directly from GitHub.
+**FlightDesk `claude-review` behaviour:** FD reads the review body and pattern-matches for approval vs rejection signals to set PASSED/FAILED. When FAILED, `get_task_prompt` includes the full comment fetch and acknowledge flow — use it. When PASSED (Claude's overall verdict was "looks good"), FD injects nothing. The Intelligence Check covers that gap by reading the full review text to catch non-blocking suggestions worth addressing.
 
 **SonarQube PENDING display bug:** If SonarQube is the only check still `PENDING` and all others have settled, check the SonarCloud proxy:
 - `qualityGatePassed: true` → treat as passing
@@ -354,7 +355,7 @@ gh api repos/{CONFIG.github_slug}/pulls/{prNumber}/comments
 # General PR comments
 gh api repos/{CONFIG.github_slug}/issues/{prNumber}/comments
 ```
-The Claude Code review is typically a review submitted by a bot (e.g. `claude[bot]` or a GitHub Actions actor). Read its full body — FlightDesk does not expose this text.
+The Claude Code review is typically a review submitted by a bot (e.g. `claude[bot]` or a GitHub Actions actor). Read its full body. At this point the `claude-review` check has PASSED (meaning Claude's overall verdict was "looks good") — but a passing review often still contains suggestions, optimizations, and notes that FD did not inject because they were non-blocking. Read and act on them.
 
 **Step 2 — Read original spec:**
 Fetch the source task (Notion/Linear/Asana) and extract the full task description and any requirements in the page body.
