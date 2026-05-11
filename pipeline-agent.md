@@ -150,7 +150,7 @@ Tasks where plan is written and approved, waiting for execution dispatch. No aut
 | `PREVIEW_READY` | — | Apply PREVIEW_READY override handler |
 | `REVIEW_RUNNING` | — | Stage 4 |
 | `REVIEW_DONE` | — | Needs human judgment. `STAGE_4_NEEDS_HUMAN` |
-| `QA_READY` | — | Run Intelligence Check. If issues found → reset to `REVIEW_RUNNING` + inject. If all good → update source task, log `STAGE_4_READY`. |
+| `QA_READY` | — | Run Intelligence Check. If issues found → inject to session (do NOT change FD status — new commits will naturally reset the check cycle). If all good → update source task, log `STAGE_4_READY`. |
 | `QA_CHANGES_REQUESTED` or `QA_APPROVED` | — | Justin's hands — `STAGE_4_WAIT` |
 | `MERGED` | — | Stage 5 |
 | `ARCHIVED` | — | Skip |
@@ -297,7 +297,7 @@ Do NOT inject to ask the session to create a PR — it bypasses FlightDesk track
 Entry: FlightDesk status is `REVIEW_RUNNING` **or** `QA_READY`.
 
 - `REVIEW_RUNNING` — checks are still in progress; pipeline monitors and injects fixes early.
-- `QA_READY` — FD auto-advanced via GitHub webhook when all checks passed. **This is the primary Intelligence Check gate.** The pipeline always runs the Intelligence Check here before surfacing to the human. If issues are found, reset to `REVIEW_RUNNING`.
+- `QA_READY` — FD auto-advanced via GitHub webhook when all checks passed. **This is the primary Intelligence Check gate.** The pipeline always runs the Intelligence Check here before surfacing to the human. If issues are found, inject to the session and leave FD status unchanged — new commits from the fix will naturally reset FD back through `REVIEW_RUNNING` → `QA_READY`, at which point the Intelligence Check runs again.
 - `REVIEW_DONE` → `STAGE_4_NEEDS_HUMAN`, surface for Justin.
 - `QA_CHANGES_REQUESTED` or `QA_APPROVED` → Justin's hands, `STAGE_4_WAIT`.
 
@@ -391,7 +391,7 @@ Reason through all three inputs together:
 Default to flagging. This runs autonomously — there is no cost to one more inject and a better result is always worth it.
 
 **Decision:**
-- **Issues found** → Reset FD status: `update_task_status(taskId, "REVIEW_RUNNING")`. Then compose a targeted inject listing each issue with its source (e.g., *"The Claude Code review on GitHub flagged a missing null check at `file.ts:42` — please address this. Also, the spec asked for X but the diff only implements Y."*). Wait for session `ready`; the Intelligence Check will re-run on the next tick when FD returns to `QA_READY`.
+- **Issues found** → Compose a targeted inject listing each issue with its source (e.g., *"The Claude Code review on GitHub flagged a missing null check at `file.ts:42` — please address this. Also, the spec asked for X but the diff only implements Y."*). Do NOT change FD status. When the session pushes fixes, new commits will trigger GitHub checks to re-run and FD will naturally cycle back through `REVIEW_RUNNING` → `QA_READY`. The Intelligence Check will re-run at that point. The session state check in Step 2 prevents duplicate injects if the session is already working.
 - **All good** → Proceed to QA_READY actions below.
 
 ---
