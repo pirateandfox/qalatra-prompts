@@ -79,8 +79,24 @@ One file per code repo. Defines everything specific to that codebase:
 | `auto_merge` | `true` = merge+deploy on approval; `false` = skip |
 | `deploy_command` | e.g. `pnpm stage && pnpm run deploy`, or `none` |
 | `reconnect_task_context` | Qalatra context for health-check alert tasks |
+| `new_code_coverage_target` | Optional coverage target for changed/new code, e.g. `80%` |
 
 **Changes here apply to that repo only.** When you learn a new field name, a new status value, a different deploy command — update this file.
+
+### Quality Gates
+
+Repo-specific quality requirements belong in `{repo}/agents/pipeline-config.md` and should also be enforced by CI when possible. Do not rely on CI alone: put the rule in config so agents know the target before coding.
+
+Example:
+
+| Field | Value |
+|---|---|
+| `new_code_coverage_target` | `80%` |
+| `coverage_scope` | New or changed code introduced by the PR |
+| `coverage_source` | CI/SonarCloud/coverage report |
+| `coverage_policy` | Agents must add or update tests with implementation work; pipeline treats unmet or unmeasured configured coverage as blocking before QA handoff. |
+
+If CI cannot currently measure the target, the pipeline should flag the missing measurement as a setup gap instead of silently declaring the task QA-ready.
 
 ### Layer 3 — Deployment Wrapper
 

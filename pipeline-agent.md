@@ -385,7 +385,16 @@ The Claude Code review is typically a review submitted by a bot (e.g. `claude[bo
 **Step 2 — Read original spec:**
 Fetch the source task (Notion/Linear/Asana) and extract the full task description and any requirements in the page body.
 
-**Step 3 — Read the branch diff:**
+**Step 3 — Read repo quality gates:**
+Read `{CONFIG.config_path}` / `agents/pipeline-config.md` for configured quality requirements, especially:
+- `new_code_coverage_target`
+- `coverage_scope`
+- `coverage_source`
+- `coverage_policy`
+
+If `new_code_coverage_target` is configured, treat it as a pre-QA requirement for changed/new code. Inspect the CI/SonarCloud/coverage results named by `coverage_source` where available. Also inspect the diff for meaningful test additions or updates when the PR adds new logic. The goal is to catch missing tests before a human QA handoff, not to wait for a CI failure that the agent could have avoided.
+
+**Step 4 — Read the branch diff:**
 ```bash
 git fetch origin
 git diff origin/{CONFIG.base_branch}...origin/<branchName> --stat
@@ -393,18 +402,21 @@ git diff origin/{CONFIG.base_branch}...origin/<branchName>
 ```
 For large diffs, read `--stat` first, then targeted per-file diffs.
 
-**Step 4 — Assess:**
-Reason through all three inputs together:
+**Step 5 — Assess:**
+Reason through all inputs together:
 
 1. **Spec vs. implementation:** Does the diff actually address what was asked? Are there explicit requirements in the spec that aren't reflected in the changes?
 2. **Claude Code review:** Does the review flag any bugs, security issues, incorrect logic, missing edge cases, or significant functional gaps? Read the full text — do not rely on the pass/fail status alone.
 3. **Unresolved comments:** Are there inline review comments or general PR comments that haven't been addressed in a follow-up commit or reply?
+4. **Configured quality gates:** If the repo defines a coverage target such as `new_code_coverage_target: 80%`, do the reports show the target was met for changed/new code? If the target cannot be measured, is that a CI/configuration gap that must be surfaced? If the PR adds new behavior but no tests, require tests unless the config explicitly exempts the task type.
 
 **What to flag:**
 - Bugs, security issues, incorrect logic
 - Missing required functionality explicitly stated in the spec
 - Anything flagged in the Claude Code review — optimizations, code quality improvements, edge cases, missing tests, performance concerns, unclear naming, anything the reviewer thought worth mentioning
 - Unresolved inline comments or review threads
+- Configured coverage targets not met, not measured, or unsupported by the current PR/CI setup
+- New or changed logic without corresponding tests when the repo has a new-code coverage policy
 - Any suggestion that would make the code meaningfully better, even if not strictly required
 
 **What to skip:**
