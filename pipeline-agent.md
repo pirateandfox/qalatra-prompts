@@ -590,6 +590,9 @@ update_task({ task_id, links: [{ url: "{run_log_path}" }] })
 - Move to Code view: `update_task({ task_id, task_type: "coding" })`
 - Surface for human review: `update_task({ task_id, task_type: "task" })`
 - Agent.config `"coding": true` → Qalatra auto-sets this when the job starts
+- Agent.config `"timeout_minutes": 45` → use for per-repo pipeline monitors. The Qalatra default is 15 minutes, which is too short for review-fix loops and multi-task monitor runs.
+
+**Timeout recovery:** If a Qalatra monitor job says `Agent timed out`, check the repo `agents/pipeline/output/` log and the source system before treating the pipeline as failed. If the stage actions completed, update the monitor task snapshot and requeue once so the latest Qalatra job reflects current state. If no output log or source-state change exists, surface for human review.
 
 **MCP server** — supervised by launchd, auto-restarts in 5s.
 - Health: `ping({})` → `{ "ok": true, "ts": "..." }`

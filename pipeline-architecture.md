@@ -35,6 +35,7 @@ For scheduled monitor tasks, use a bounded window:
 - Requeue the same daily task during that day instead of creating one task per run.
 - Write detailed run output to `output/YYYY-MM-DD-HH-MM-*.md`; do not append routine "checked, still waiting" notes to Qalatra forever.
 - Keep the monitor task description as the current task snapshot. Add Qalatra notes/context only for notable events: failures, handoffs, cleanup, or human attention.
+- Per-repo pipeline agents can exceed Qalatra's default 15-minute runner timeout while fixing review comments or advancing multiple tasks. Set `"timeout_minutes": 45` in pipeline `agent.config` files unless the deployment has a stronger reason to keep the default.
 - On the first run of a new day, complete stale active monitor tasks whose latest job is not `running` or `queued`.
 - If duplicate active monitor tasks exist for the same repo/day, keep the `running`/`queued` one if present, otherwise keep the newest; complete the stale duplicates.
 
