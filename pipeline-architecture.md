@@ -22,6 +22,26 @@ Everything else is autonomous.
 
 ---
 
+## Qalatra Task Roles
+
+Qalatra has two distinct roles in the pipeline. Keep them separate:
+
+1. **Planning tasks** are one-per-source-task per routed repo. They dispatch the plan agent and must be completed when the plan is written to the repo and source system.
+2. **Pipeline monitor tasks** are scheduler handles for per-repo pipeline agents. They are not the source task and should not accumulate unbounded context.
+
+For scheduled monitor tasks, use a bounded window:
+
+- Recommended default: **one active monitor task per repo per day** for deployments that run every 10-30 minutes.
+- Requeue the same daily task during that day instead of creating one task per run.
+- Write detailed run output to `output/YYYY-MM-DD-HH-MM-*.md`; do not append routine "checked, still waiting" notes to Qalatra forever.
+- Keep the monitor task description as the current task snapshot. Add Qalatra notes/context only for notable events: failures, handoffs, cleanup, or human attention.
+- On the first run of a new day, complete stale active monitor tasks whose latest job is not `running` or `queued`.
+- If duplicate active monitor tasks exist for the same repo/day, keep the `running`/`queued` one if present, otherwise keep the newest; complete the stale duplicates.
+
+No Qalatra feature change is required for this pattern. Existing primitives are enough: `get_tasks_by_agent`, `create_task`, `update_task`, `queue_agent_job`, and `complete_task`.
+
+---
+
 ## Three-Layer Architecture
 
 ### Layer 1 — Canonical (`qalatra-prompts`)
