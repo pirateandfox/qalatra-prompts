@@ -132,10 +132,34 @@ Tasks where plan is written and approved, waiting for execution dispatch. No aut
 1. Parse FlightDesk task ID from `task.links`
 2. Write FlightDesk URL to source task (see Source System Updates — idempotent)
 3. `get_task({ taskId })` → FlightDesk status
-4. `get_task_notes({ task_id })` → regex `session_[A-Za-z0-9]+` → session ID
+4. Resolve session ID:
+   - Prefer `get_task_notes({ task_id })` → regex `session_[A-Za-z0-9]+`
+   - If the FlightDesk task has a session URL / teleport ID, parse `session_[A-Za-z0-9]+` from that
+   - If MCP data omits the session but the CLI shows it, run `flightdesk task status <taskId>` and parse the `Session:` or `Resume:` line
 5. `claude_session_get_state({ session_id })` → session state
 
 **Pulled-back task detection:** Before flagging any task as `NEEDS_ATTENTION` for a missing FD link or session, check the source task's workflow status (if `source_url` exists). If the status indicates the task has been pulled back for rethinking (e.g. `Backlog`, `Needs Discussion`, `Needs Estimate`, `Planning`), log `STAGE_3_PULLED_BACK` and skip silently.
+
+**Branch attachment recovery:** FlightDesk sometimes fails to attach a branch automatically because its fuzzy task-title matching misses the Claude-generated branch name. Do not treat `DISPATCHED` + missing `branchName` as inactive if the Claude session already has a branch.
+
+When FlightDesk status is `DISPATCHED` and `branchName` is empty:
+1. Resolve the session ID from FlightDesk/Qalatra as above
+2. `claude_session_get_state({ session_id })`
+3. If `branchBar.featureBranch` is empty → wait (`STAGE_3_WAIT`)
+4. If a branch exists, check for a PR:
+   ```bash
+   gh pr list --repo {CONFIG.github_slug} --head <branchName> --json number,url --limit 1
+   ```
+5. If no PR exists → attach the branch:
+   ```bash
+   flightdesk task update <taskId> --status IN_PROGRESS --branch <branchName>
+   ```
+   Log `STAGE_3_CONNECTED`
+6. If a PR exists → attach branch + PR:
+   ```bash
+   flightdesk task update <taskId> --status PR_OPEN --branch <branchName> --pr-url <prUrl> --pr-number <prNumber>
+   ```
+   FlightDesk will sync review state and may advance to `REVIEW_RUNNING`. Log `STAGE_3_BRANCH_RECOVERED`
 
 **State machine — first matching condition wins:**
 
@@ -176,7 +200,7 @@ Read transcript: `claude_session_get_transcript({ session_id, last_n: 8 })`
 - Session reports completion without a branch → Session Assessment handler
 
 **Notes:**
-- Never call `update_task_status` for `PR_OPEN` or `MERGED` — FD auto-detects via webhook
+- Never call `update_task_status` for `PR_OPEN` or `MERGED` during normal flow — FD auto-detects via webhook. The exception is manual branch attachment recovery when FD missed the branch/PR; use `flightdesk task update ... --status PR_OPEN --branch ... --pr-url ... --pr-number ...`.
 - If `get_task_notes` has no session ID → `STAGE_3_NO_SESSION`, do not guess
 - If FD task ID missing from `task.links` → check source before flagging (pulled-back detection)
 
