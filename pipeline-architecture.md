@@ -126,7 +126,8 @@ Applies to: tmi-shopify-3.0
 
 - No codegen, no migrations, no local API
 - Post-session: diff check only — if changes look right, open PR directly
-- Base branch: `live`
+- Base branch: `develop`
+- Before execution kickoff, sync `develop` with `live`: merge `origin/live` into `develop` and push. If the sync conflicts or fails, do not register the task.
 - Deploy: Shopify pre-push hook handles theme sync automatically
 
 ### `electron`
