@@ -141,18 +141,19 @@ Post-session diff assessment:
 2. Stop anything running (get compose file via `docker inspect`)
 3. Start: `docker compose -f {repo}/.dev/docker-compose.yml up -d postgres`
 4. Wait: `until docker exec $(docker ps ...) pg_isready -U prisma; do sleep 2; done`
-5. Check `.env` — `DATABASE_URL` must be `localhost`. **Hard gate: never run Prisma migrate against non-localhost.**
+5. Define `LOCAL_DATABASE_URL="postgresql://prisma:prisma@localhost:5432/prisma"` — **never edit `.env`.** Every DB-touching command below is prefixed inline with `DATABASE_URL="$LOCAL_DATABASE_URL"`. **Hard gate: never run Prisma migrate dev/reset against a non-localhost host.**
 6. `git checkout <branchName>`
-7. `pnpm prisma migrate dev --name <slug>`
-   - If drift detected: `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="Yes" pnpm prisma migrate reset --force` then retry
-8. `pnpm db-update`
-9. `npx nx build api` — verify (inject errors to session if any)
-10. Restore `.env` to production-active
-11. Stop Docker: `docker compose -f {repo}/.dev/docker-compose.yml down`
-12. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
-13. Inject "please run git pull" → verify `running`
-14. `claude_session_create_pr(session_id)`
-15. `git checkout <base_branch>`
+7. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm prisma migrate dev --name <slug>`
+   - If drift detected: `DATABASE_URL="$LOCAL_DATABASE_URL" PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="Yes" pnpm prisma migrate reset --force` then retry
+8. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm db-update`
+9. `DATABASE_URL="$LOCAL_DATABASE_URL" npx nx build api` — verify (inject errors to session if any)
+10. Stop Docker: `docker compose -f {repo}/.dev/docker-compose.yml down`
+11. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
+12. Inject "please run git pull" → verify `running`
+13. `claude_session_create_pr(session_id)`
+14. `git checkout <base_branch>`
+
+Newer nestled repos also carry a structural guard in `prisma.config.ts` that hard-fails `migrate dev`/`migrate reset` against any non-localhost host. A `BLOCKED: prisma migrate ...` error means the guard fired — fix the URL prefix, never bypass it.
 
 **NX daemon troubleshooting:** If `nx build` hangs: `pkill -f "nx serve api"; pkill -f "nx daemon"; npx nx reset`
 

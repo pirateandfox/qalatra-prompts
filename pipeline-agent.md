@@ -281,26 +281,29 @@ Docker credentials (all nestled projects): user=`prisma`, password=`prisma`, db=
 3. Start target: `docker compose -f {CONFIG.repo_path}/.dev/docker-compose.yml up -d postgres`
 4. Wait: `until docker exec $(docker ps --filter "publish=5432" --format '{{.Names}}') pg_isready -U prisma; do sleep 2; done`
    - Collation mismatch fix: `docker exec <container> psql -U prisma -d prisma -c "ALTER DATABASE prisma REFRESH COLLATION VERSION;"`
-5. Read `{CONFIG.repo_path}/.env` → check `DATABASE_URL`
-   - Already `localhost` → proceed
-   - Points to remote → swap env (comment prod lines, uncomment dev lines)
-6. **Hard gate:** re-read `DATABASE_URL` — if still not `localhost` / `127.0.0.1` → **hard stop**, flag `NEEDS_ATTENTION`. Never run Prisma migrate against non-localhost.
+5. Define the local DB URL — **never edit `.env`**; the ambient env file stays untouched no matter what it points at:
+   ```bash
+   LOCAL_DATABASE_URL="postgresql://prisma:prisma@localhost:5432/prisma"
+   ```
+   Every DB-touching command below gets `DATABASE_URL="$LOCAL_DATABASE_URL"` prefixed inline. dotenv does not override already-set env vars, so the inline value always wins over whatever `.env` contains.
+6. **Hard gate:** the host in `$LOCAL_DATABASE_URL` must be `localhost` / `127.0.0.1`, and every migrate/db-update/build command below must carry the explicit `DATABASE_URL=` prefix. If a command would run without it → **hard stop**, flag `NEEDS_ATTENTION`. Never run `prisma migrate dev`/`migrate reset` against a remote host.
 7. `cd {CONFIG.repo_path} && git checkout <branchName>`
-8. `pnpm prisma migrate dev --name <slug>`
-   - Drift detected → `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="Yes" pnpm prisma migrate reset --force` then retry
-9. `pnpm db-update`
-10. `npx nx build api` — verify
+8. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm prisma migrate dev --name <slug>`
+   - Drift detected → `DATABASE_URL="$LOCAL_DATABASE_URL" PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="Yes" pnpm prisma migrate reset --force` then retry
+9. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm db-update`
+10. `DATABASE_URL="$LOCAL_DATABASE_URL" npx nx build api` — verify
     - TS errors → inject to session, wait for `ready`, pull, re-run from step 9
-11. If `{CONFIG.sdk_command}` is set → run it
-12. Restore `.env` (comment dev lines, uncomment prod/staging lines)
-13. **Stop Docker:** `docker compose -f {CONFIG.repo_path}/.dev/docker-compose.yml down`
-14. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
-15. Inject: *"I ran prisma migrate dev and regenerated artifacts locally and pushed to the branch. Please run git pull to sync your working copy."* → verify `running`
+11. If `{CONFIG.sdk_command}` is set → run it (same `DATABASE_URL=` prefix)
+12. **Stop Docker:** `docker compose -f {CONFIG.repo_path}/.dev/docker-compose.yml down`
+13. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
+14. Inject: *"I ran prisma migrate dev and regenerated artifacts locally and pushed to the branch. Please run git pull to sync your working copy."* → verify `running`
     - Same CRITICAL notes as codegen: verify state change, no PR mention, retry if needed
-16. `claude_session_create_pr(session_id)`
-17. `git checkout {CONFIG.base_branch}`
+15. `claude_session_create_pr(session_id)`
+16. `git checkout {CONFIG.base_branch}`
 
-**CRITICAL:** Always restore `.env` to production-active after the run. Always stop Docker. Never leave a local Postgres running.
+**CRITICAL:** Never edit `.env` — the explicit `DATABASE_URL=` prefix replaces the old swap/restore approach. Always stop Docker. Never leave a local Postgres running.
+
+**Structural guard (newer nestled repos):** repos carrying the template's `prisma.config.ts` guard hard-fail `migrate dev`/`migrate reset` whenever the resolved `DATABASE_URL` host isn't localhost. If you see `BLOCKED: prisma migrate ...`, the guard fired and saved you — fix the `DATABASE_URL=` prefix on the command; never attempt to bypass or edit the guard.
 
 ---
 
