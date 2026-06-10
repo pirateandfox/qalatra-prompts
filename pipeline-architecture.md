@@ -116,7 +116,11 @@ One per physical machine/deployment. Contains:
 ## Known Frameworks
 
 ### `nestled`
-Applies to: biztobiz, mi-core, muzebook, nestled, nestled-forms, nestled-template, flightdesk, qalatra
+Applies to (active apps): biztobiz, mi-core, muzebook, flightdesk, cashcast, moceanic-ai, qalatra.com, travel-outlook
+
+Framework/template repos (nestled-based but not pipeline app targets): nestled, nestled-forms, nestled-template, nestled-dev-template
+
+Note: `qalatra` (the desktop app) is NOT nestled-based — it is the `electron` framework. The website is `qalatra.com`, which is nestled.
 
 Post-session diff assessment:
 
