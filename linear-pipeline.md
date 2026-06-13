@@ -10,6 +10,13 @@ plan-approval gate by default, and approval at review time merges AND deploys (e
 auto-deploys from its base branch via Railway / CI). The single mandatory human gate is
 `In Review → Approved`.
 
+The one exception path is **`Blocked`** — when the pipeline hits something it can't resolve
+without a human decision (a red gate from a pre-existing/unrelated issue, a missing credential,
+an out-of-scope dependency), it does **not** sit silently in `In Progress`. It moves the issue
+to `Blocked`, posts the blocker + the specific question as a comment, and fires a proactive
+alert. `Blocked` is a visible "needs you" column with a live comment loop, so the decision
+doesn't get buried in a run log.
+
 ---
 
 ## Identity & Access
@@ -39,6 +46,7 @@ curl -s -X POST https://api.linear.app/graphql \
 | Todo | `a17fa00f-576e-48f8-a79b-f4e21f5c03ec` | unstarted |
 | Planning | `22a53e52-abea-465b-9383-50cb3068a29c` | started |
 | In Progress | `d31fb44f-8e14-40c2-a958-1b5a95af7f51` | started |
+| Blocked | `dbacf9b0-d78c-4e44-8f26-aafb19dab41c` | started |
 | In Review | `ed40a74a-1572-4c0c-9ea5-f294ab1cd487` | started |
 | Changes Requested | `df08f95c-e834-4c88-a723-046c2d6f4327` | started |
 | Approved | `4cf763d6-a815-4027-bbbb-29d1c0ea4a40` | started |
@@ -57,7 +65,8 @@ manual override that pulls an issue out of the pipeline.
 | Backlog | human | Skip — not a pipeline status |
 | **Todo** (+ Shi assigned) | pipeline | **Intake** — dedup, create Qalatra plan task, queue planner → `Planning` |
 | **Planning** | turn by last comment | Planner drafts; posts the plan as an issue comment. Needs input → ask in a comment and wait (Shi-authored last comment = waiting on human; human-authored last = re-engage planner). Plan complete → **no approval gate**: orchestrator fires `flightdesk register` immediately → `In Progress`. Exception: if the issue has the **`plan-gate` label**, the orchestrator does NOT auto-execute — Justin reviews the plan comment and removes the label to approve (or comments to steer). |
-| **In Progress** | pipeline | Per-repo pipeline monitors: FD status, session discovery + branch recovery, PR creation, preview + PR attached to the issue, quality gates (Sonar where wired + Intelligence Check). All green → `In Review`. |
+| **In Progress** | pipeline | Per-repo pipeline monitors: FD status, session discovery + branch recovery, PR creation, preview + PR attached to the issue, quality gates (Sonar where wired + Intelligence Check). All green → `In Review`. If a blocker needs a human decision the pipeline **can't** resolve on its own (red gate on a pre-existing/unrelated issue, missing credential/input, out-of-scope dependency), do **not** park here silently → move to `Blocked` (comment + alert). |
+| **Blocked** | turn by last comment | Pipeline parked here because it needs a human decision/input. **On entry it must:** (1) post one comment stating the blocker and the specific question/decision, (2) fire a proactive inbox alert (same plumbing as `ROUTE_UNKNOWN`). Then turn-taking by last comment, same as Planning: Shi-authored last comment = waiting on human; human commented last = re-engage — read the decision, act on it (inject into the live session / resume work / open a follow-up), then move to the right next state (`In Progress` if work resumes, `In Review` if it's now ready, `Changes Requested` if the human asked for changes). **Never auto-merge from `Blocked`.** |
 | **In Review** | human (Justin) | Skip — Justin tests the preview/PR. He sets `Approved`, or `Changes Requested` with a comment. |
 | **Changes Requested** | pipeline | **Pre-merge loop** — read the latest human comment(s), inject into the live session (re-dispatch on the existing branch if it died), comment back when pushed, flip to `In Review`. Repeats. |
 | **Approved** | pipeline | **Merge + close out** — merge the PR to the base branch (this IS the deploy: Railway/CI watches the base branch), delete the branch, archive session + FD task, then set `Done` **last**. |
@@ -71,7 +80,7 @@ manual override that pulls an issue out of the pipeline.
 { issues(filter: {
     assignee: { id: { eq: "62e2dc3d-544c-428a-ba8f-f9236b91c16e" } },
     team: { id: { eq: "f3a51891-3a53-45f1-9a8c-f14bf79fcb43" } },
-    state: { name: { in: ["Todo","Planning","In Progress","Changes Requested","Approved"] } }
+    state: { name: { in: ["Todo","Planning","In Progress","Blocked","Changes Requested","Approved"] } }
   }, first: 100) {
     nodes {
       id identifier title url description
@@ -95,9 +104,10 @@ mutation { attachmentCreate(input: { issueId: "<issue id>", title: "FlightDesk",
 Use titles `FlightDesk`, `Preview`, `Pull Request`. Read them back from `attachments.nodes` during
 discovery — the FlightDesk attachment is the equivalent of Notion's `Agent URL`.
 
-**Turn-taking check (Planning):** read `comments` — if the most recent comment's `user.id` is Shi's,
-the planner asked and is waiting on a human; if a human commented last (or no comments), it's the
-planner's turn.
+**Turn-taking check (Planning / Blocked / Changes Requested):** read `comments` — if the most
+recent comment's `user.id` is Shi's, the pipeline asked and is waiting on a human; if a human
+commented last (or no comments), it's the pipeline's turn to re-engage. This same most-recent-author
+rule governs all three conversational states.
 
 ## Routing
 
@@ -135,8 +145,14 @@ when the path's prefix doesn't exist locally (swap the prefix up to `/<repo>/` w
 
 ## Pipeline-Agent Source-System Overrides (vs canonical pipeline-agent.md)
 
-- Task discovery: the Linear query above (statuses `In Progress`, `Changes Requested`, `Approved`), filtered to issues whose project routes to *this* repo.
+- Task discovery: the Linear query above (statuses `In Progress`, `Blocked`, `Changes Requested`, `Approved`), filtered to issues whose project routes to *this* repo.
 - FD task resolution: the `FlightDesk` attachment on the issue.
 - Status writes + comments: GraphQL patterns above. Quality-gate failures inject fix instructions into the session and stay at `In Progress` (no status spam).
+- **Blocked handling:** distinguish a *transient* gate failure (the pipeline can fix it itself by injecting instructions — stays `In Progress`) from a *human-decision* blocker (red gate on a pre-existing/unrelated issue, missing credential/input, out-of-scope dependency). On a human-decision blocker:
+  1. Move the issue to `Blocked` (`dbacf9b0-d78c-4e44-8f26-aafb19dab41c`).
+  2. Post **one** comment stating the blocker + the specific question/decision (no internal provenance — this is Justin-facing).
+  3. Fire the proactive alert as a Qalatra inbox task: `create_task({ title: "Blocked: <issue identifier> — <one-line blocker>", description: "<blocker + the decision needed>\n\n<issue url>", context: "coderepos", project: "<repo>", my_priority: 2, inbox: true })`. Dedup on the issue URL first so a still-blocked issue doesn't re-alert every run.
+  
+  On a later pass, when a human commented last on a `Blocked` issue, read the decision, act on it (inject into the live session / resume / open a follow-up), mark the alert task done, then move to the appropriate next state. **Never auto-merge from `Blocked`.**
 - Merge: `gh pr merge <n> --repo <github_slug> --merge --delete-branch`. Merging to the base branch is the deploy — do not run a deploy command unless the repo config specifies one.
 - Closeout order: archive session → archive FD task (webhooks usually handle it) → set `Done` last.
