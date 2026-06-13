@@ -617,7 +617,13 @@ Log approved+merged: `STAGE_4B_MERGED` | waiting: `STAGE_4B_WAITING` | conflict:
 
 4. **Mark complete in source system** (see Source System Closeout)
 
-5. **Complete Qalatra task:** `complete_task(qalatra_task_id)`
+5. **Ship-log entry (if the flavor defines one):** a merge to the base branch *is* the deploy, so this
+   is the moment something went live. If the deployment/flavor specifies a ship log (P&F appends to
+   Justin's deploy log — see `linear-pipeline.md` → Pipeline-Agent overrides), write the entry here:
+   project · issue id + title · PR link · merge time · verifier verdict · auto-merged vs human-approved.
+   This is the compensating control that makes default auto-merge safe — after-the-fact visibility.
+
+6. **Complete Qalatra task:** `complete_task(qalatra_task_id)`
 
 Log: `STAGE_5_DONE`
 

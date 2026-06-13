@@ -155,4 +155,9 @@ when the path's prefix doesn't exist locally (swap the prefix up to `/<repo>/` w
   
   On a later pass, when a human commented last on a `Blocked` issue, read the decision, act on it (inject into the live session / resume / open a follow-up), mark the alert task done, then move to the appropriate next state. **Never auto-merge from `Blocked`.**
 - Merge: `gh pr merge <n> --repo <github_slug> --merge --delete-branch`. Merging to the base branch is the deploy — do not run a deploy command unless the repo config specifies one.
-- Closeout order: archive session → archive FD task (webhooks usually handle it) → set `Done` last.
+- Closeout order: archive session → archive FD task (webhooks usually handle it) → **ship-log entry** → set `Done` last.
+- **Ship log (Justin's deploy visibility — Stage 5):** a merge to the base branch is the deploy, so on every closeout append an entry to `$WS/projects/briefs/shipped/YYYY-MM.md` (current month; the file is git-synced to Justin's laptop). Read-modify-write, **newest first**: entries grouped under a `## YYYY-MM-DD` header (create the header if today's isn't already at the top; create the file with a `# Shipped — YYYY-MM` title if absent). One line per merge, in this exact shape:
+  ```
+  - `HH:MM` · **<repo>** · <PIR-ID> <issue title> · [PR #<n>](<pr url>) · verifier: <MERGE|n/a> · <auto-merged|human-approved>
+  ```
+  Use the merge time (24h local). `verifier:` = the adversarial verifier's verdict recorded at QA_READY (`n/a` if the repo had no verifier run). `auto-merged` when it merged on `Approved`/verifier sign-off without Justin's manual approval; `human-approved` when Justin set `Approved`. This log is the compensating control for default auto-merge — never skip it on a successful merge. The morning-review agent reads it for the "Shipped Yesterday" digest.
