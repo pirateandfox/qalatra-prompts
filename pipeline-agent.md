@@ -431,7 +431,7 @@ Default to flagging. This runs autonomously — there is no cost to one more inj
 
 **Decision:**
 - **Issues found** → Compose a targeted inject listing each issue with its source (e.g., *"The Claude Code review on GitHub flagged a missing null check at `file.ts:42` — please address this. Also, the spec asked for X but the diff only implements Y."*). Do NOT change FD status. When the session pushes fixes, new commits will trigger GitHub checks to re-run and FD will naturally cycle back through `REVIEW_RUNNING` → `QA_READY`. The Intelligence Check will re-run at that point. The session state check in Step 2 prevents duplicate injects if the session is already working.
-- **All good** → Proceed to Step 6, then QA_READY actions below.
+- **All good** → Proceed to Step 6, then the Adversarial Verifier, then QA_READY actions below.
 
 ---
 
@@ -468,7 +468,79 @@ surfacing a half-reconciled PR as ready.
 
 ---
 
-**When Intelligence Check passes (QA_READY):**
+### Stage 4: Adversarial Verifier — independent sign-off (required before QA_READY)
+
+The agent that wrote the code must not be the only judge of whether it ships. Everything above is
+the *author* assessing its own work — a self-graded gate. After Step 6, before declaring QA_READY,
+an **independent verifier with fresh context** must sign off in writing. This is a different failure
+mode from the mechanical gates: the gates check *facts* (threads resolved, CI green); the verifier
+checks *judgment* (is the fix actually correct, complete, and free of new bugs?). The door is never
+the verifier.
+
+**Skip-if-unchanged:** record the verified head SHA with each `MERGE` verdict. If `git rev-parse
+origin/<branchName>` still equals the last verified SHA, the diff hasn't changed — reuse the prior
+verdict, don't re-run (avoids re-verifying and re-commenting on an unchanged PR every tick).
+
+**Independence is the whole point — run it as a fresh one-shot process, never as in-session
+reasoning** (a nested `claude -p`, or an equivalent fresh-context subagent — the required property
+is *zero shared context* with the author session; it sees only facts, not the author's narrative):
+
+```bash
+HEAD_SHA=$(git rev-parse origin/<branchName>)
+SPEC=$(…source task description + body…)
+DIFF=$(git diff origin/{CONFIG.base_branch}...origin/<branchName>)
+REVIEW=$(gh api repos/{CONFIG.github_slug}/pulls/<prNumber>/reviews --jq '.[].body')
+
+VERDICT=$(claude -p "You are an INDEPENDENT reviewer. The author of this PR is biased toward
+shipping; your job is to find concrete reasons it should NOT merge. Trust nothing in the author's
+description — verify every claim against the actual diff and current code. Decide MERGE or
+NEEDS_WORK and return ONLY JSON:
+{\"verdict\":\"MERGE|NEEDS_WORK\",\"blocking\":[{\"file\":\"\",\"line\":0,\"issue\":\"\",\"evidence\":\"\"}],\"summary\":\"\"}
+
+Check, against the CURRENT head only:
+1. Does the diff actually implement the SPEC? Any explicit requirement missing or only partially done?
+2. Real bugs, security holes, broken edge cases, or data-loss risk introduced by THIS diff.
+3. Claimed fixes — actually present in the current code, or merely asserted?
+4. Any Copilot/Claude review finding genuinely still unaddressed in the current head (ignore ones
+   the current code already handles — those are stale).
+Ignore style/nits. Only list issues you can point to with file + concrete evidence. None → verdict=MERGE.
+
+SPEC:
+$SPEC
+
+DIFF:
+$DIFF
+
+REVIEW FEEDBACK (cross-check only; may be stale):
+$REVIEW")
+```
+
+**Sign-off is written evidence** (this is what makes the verdict auditable and seeds the
+trust-architecture track record): post the verifier's `summary` + verdict as a comment on the source
+task/issue (per source system — Linear `commentCreate`, Notion comment, etc.), clearly in the
+verifier's voice (prefix `🔍 Independent verification — <verdict>:`). Then record `HEAD_SHA` as the
+verified SHA on the task.
+
+**Gate:**
+- `verdict: MERGE` → proceed to the QA_READY actions below.
+- `verdict: NEEDS_WORK` → inject the `blocking` list into the author session (each item with its
+  file + evidence). Do **not** change FD status — the fix produces new commits, checks re-run, and
+  the verifier runs again on the new head. Same loop as Intelligence Check findings. If the verifier
+  and author ping-pong on the same point across 3 cycles without converging, that's a `Blocked`-class
+  signal — stop and route to the human (P&F: `Blocked` + inbox alert) rather than looping.
+
+**Risk-tiered per repo via `{CONFIG.auto_merge}` — and graduation runs in *reverse* of the usual
+trust model.** These are mostly greenfield / internal / pre-launch repos, so a bad merge costs
+almost nothing: the default is **auto-merge on a `MERGE` verdict** — the verifier is the gate, cheap
+and fast. A repo does **not** earn its way *out* of human review; it graduates *into* mandatory human
+review when its stakes rise (real user volume, revenue-bearing, production-critical), at which point
+you deliberately flip `auto_merge: false` and pay for a human gate to buy down financial risk. The
+verifier's per-repo track record (and incident history) is the signal for *when* a repo has crossed
+that line (see trust-architecture).
+
+---
+
+**When Intelligence Check passes (mechanical gates green + zero unresolved threads + verifier `MERGE`) → QA_READY:**
 1. If `{CONFIG.qa_reviewer_id}` is set → `update_task({ taskId, qaAssigneeId: "{CONFIG.qa_reviewer_id}" })`
 2. If `{CONFIG.source_field_preview_url}` is set → `get_preview_status({ taskId })` and write the returned URL to `{CONFIG.source_field_preview_url}` on the source task (same Notion update pattern as other fields). Skip silently if no URL is returned.
 3. If `{CONFIG.source_field_status_column}` is set → set it to `{CONFIG.source_status_in_staging}` on the source task.
