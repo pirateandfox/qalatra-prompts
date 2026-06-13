@@ -358,7 +358,7 @@ Entry: FlightDesk status is `REVIEW_RUNNING` **or** `QA_READY`.
 | Check | Detection | Action |
 |---|---|---|
 | SonarCloud | `integrationSlug` contains `"sonar"`, `status: "FAILED"` | `get_task_prompt({ taskId, promptType: "review" })` → inject |
-| Copilot | `integrationSlug: "github-reviews"`, `status: "FAILED"` — **verify** with `gh pr view --json reviews`. Both `CHANGES_REQUESTED` **and** `COMMENTED` are blocking — `COMMENTED` means open unresolved comments that must be addressed. Only treat as non-blocking if the reviews array is empty or all reviews are `APPROVED`/`DISMISSED`. | `get_task_prompt({ taskId, promptType: "review" })` → inject into session |
+| Copilot | `integrationSlug: "github-reviews"`, `status: "FAILED"` — **verify** with `gh pr view --json reviews` **and** the `reviewThreads` GraphQL query (isResolved/isOutdated). `CHANGES_REQUESTED` and `COMMENTED` are blocking *only while review threads are still unresolved* — the review object itself stays `COMMENTED` even after every thread is handled, so do not key off the verdict alone or you'll inject forever. Non-blocking when: reviews array is empty, all reviews are `APPROVED`/`DISMISSED`, **or every review thread is resolved** (i.e. addressed + reconciled per Stage 4 Step 6). | Unresolved threads with real, still-present findings → `get_task_prompt({ taskId, promptType: "review" })` → inject. Threads already addressed by the current head → reply + resolve (Step 6), do not inject. |
 | Claude Code review | `integrationSlug: "claude-review"`, `status: "FAILED"` | `get_task_prompt({ taskId, promptType: "review" })` → inject. FD fetches the full comment via its proxy, instructs the agent to address it, and expects `POST /proxy/claude-feedback/acknowledge` when done. Do not bypass this flow. |
 | All automated checks passing | No FAILED checks | Run Intelligence Check (see below) |
 
@@ -409,7 +409,7 @@ For large diffs, read `--stat` first, then targeted per-file diffs.
 Reason through all inputs together:
 
 1. **Spec vs. implementation:** Does the diff actually address what was asked? Are there explicit requirements in the spec that aren't reflected in the changes?
-2. **Claude Code review:** Does the review flag any bugs, security issues, incorrect logic, missing edge cases, or significant functional gaps? Read the full text — do not rely on the pass/fail status alone.
+2. **Claude Code review:** Does the review flag any bugs, security issues, incorrect logic, missing edge cases, or significant functional gaps? Read the full text — do not rely on the pass/fail status alone. **Verify each flagged item against the *current* branch head before treating it as real.** Long-form reviews (the Claude review especially) are generated against the commit that existed when they ran, and go stale the moment a later commit addresses the finding — GitHub marks such threads `isOutdated`. A finding the current code already handles is *not* a real issue: reply on the thread noting it's already addressed and resolve it (Step 6), do **not** re-inject it into the session.
 3. **Unresolved comments:** Are there inline review comments or general PR comments that haven't been addressed in a follow-up commit or reply?
 4. **Configured quality gates:** If the repo defines a coverage target such as `new_code_coverage_target: 80%`, do the reports show the target was met for changed/new code? If the target cannot be measured, is that a CI/configuration gap that must be surfaced? If the PR adds new behavior but no tests, require tests unless the config explicitly exempts the task type.
 
@@ -431,7 +431,40 @@ Default to flagging. This runs autonomously — there is no cost to one more inj
 
 **Decision:**
 - **Issues found** → Compose a targeted inject listing each issue with its source (e.g., *"The Claude Code review on GitHub flagged a missing null check at `file.ts:42` — please address this. Also, the spec asked for X but the diff only implements Y."*). Do NOT change FD status. When the session pushes fixes, new commits will trigger GitHub checks to re-run and FD will naturally cycle back through `REVIEW_RUNNING` → `QA_READY`. The Intelligence Check will re-run at that point. The session state check in Step 2 prevents duplicate injects if the session is already working.
-- **All good** → Proceed to QA_READY actions below.
+- **All good** → Proceed to Step 6, then QA_READY actions below.
+
+---
+
+**Step 6 — Reconcile and resolve every review thread (required before QA_READY):**
+
+Fixing a comment in code is not enough — the pipeline must close the loop *on GitHub* so no thread
+is left dangling. This is mandatory, not optional: it's what keeps a Copilot `COMMENTED` review from
+blocking forever, and it's the difference between "the code is right" and "the reviewer can see it's
+been handled." For **every** open review thread on the PR (Copilot, Claude, other bots, humans):
+
+1. Determine its disposition against the **current branch head**:
+   - *Already addressed* — the current code already handles it (the thread is often `isOutdated`
+     because a later commit changed the line). Common for the long-form Claude review.
+   - *Fixed this pass* — you just injected a fix for it.
+   - *Won't fix* — intentionally not actioned (out of scope, incorrect suggestion, by-design).
+2. Post **one** reply on the thread stating the disposition in plain terms — what was changed (name
+   the mechanism/commit) or why it isn't being actioned.
+3. Mark the thread resolved:
+   ```bash
+   # List open threads + node IDs
+   gh api graphql -f query='{ repository(owner:"<owner>",name:"<repo>"){ pullRequest(number:<n>){
+     reviewThreads(first:50){ nodes{ id isResolved isOutdated comments(first:10){ nodes{ author{login} body path } } } } } } }'
+   # Reply, then resolve (per thread)
+   gh api graphql -f query='mutation($t:ID!,$b:String!){ addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$t,body:$b}){ comment{ url } } }' -f t=<threadId> -f b="<reply>"
+   gh api graphql -f query='mutation($t:ID!){ resolveReviewThread(input:{threadId:$t}){ thread{ isResolved } } }' -f t=<threadId>
+   ```
+   (Requires the box's `gh` identity to have triage/write on the repo.)
+
+**A QA_READY handoff requires zero unresolved review threads.** If a thread genuinely can't be
+resolved because it needs a *human* decision (not a code fix the agent can make), that is a
+`Blocked`-class signal — leave it unresolved, state why in the reply, and follow the source system's
+blocked/needs-human path (P&F: move the Linear issue to `Blocked` + inbox alert) rather than
+surfacing a half-reconciled PR as ready.
 
 ---
 
