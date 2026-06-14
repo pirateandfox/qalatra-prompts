@@ -541,6 +541,13 @@ that line (see trust-architecture).
 ---
 
 **When Intelligence Check passes (mechanical gates green + zero unresolved threads + verifier `MERGE`) → QA_READY:**
+
+> **Auto-merge-on-verifier flavors** (e.g. `linear-pipeline.md` auto-merge repos, where the verifier
+> `MERGE` verdict *is* the approval): **skip steps 3–5 below** — no staging/`ready_for_testing` status
+> write, no human review task. Proceed directly to Stage 4b to merge, and keep the issue in the
+> work-in-progress state (never a review state) if the merge can't complete this pass. The numbered
+> steps below are the **human-gated path** only.
+
 1. If `{CONFIG.qa_reviewer_id}` is set → `update_task({ taskId, qaAssigneeId: "{CONFIG.qa_reviewer_id}" })`
 2. If `{CONFIG.source_field_preview_url}` is set → `get_preview_status({ taskId })` and write the returned URL to `{CONFIG.source_field_preview_url}` on the source task (same Notion update pattern as other fields). Skip silently if no URL is returned.
 3. If `{CONFIG.source_field_status_column}` is set → set it to `{CONFIG.source_status_in_staging}` on the source task.
@@ -561,6 +568,8 @@ that line (see trust-architecture).
 On every tick, for tasks at `PR_OPEN`, `PREVIEW_READY`, `REVIEW_DONE`, `QA_READY`:
 
 1. **Check approval status in source system:**
+   **Auto-merge-on-verifier flavors** (e.g. `linear-pipeline.md` auto-merge repos): the verifier
+   `MERGE` already cleared this — **skip this approval check** and proceed to step 2. (Otherwise:)
    Fetch source task and read the approval field. Compare to `{CONFIG.source_status_approved}`.
    - Not approved → skip, `STAGE_4B_WAITING`
    - Approved → proceed
@@ -639,7 +648,7 @@ Mid-pipeline writes to keep the team's task board in sync.
 |---|---|
 | Stage 3 entry: FD URL confirmed in `task.links` | Write FD URL to `{CONFIG.source_field_flightdesk_url}` |
 | Stage 3: PR open | Write PR URL to `{CONFIG.source_field_github_url}` (if configured) |
-| Stage 4 all-green (`QA_READY`) | Set `{CONFIG.source_field_status}` to `{CONFIG.source_status_ready_for_testing}` |
+| Stage 4 all-green (`QA_READY`) | Set `{CONFIG.source_field_status}` to `{CONFIG.source_status_ready_for_testing}` — **human-gated path only. Auto-merge-on-verifier flavors skip this**: they merge straight to `Done` and must never write a review state (for Linear, `In Review` is excluded from discovery, so writing it orphans the issue — see `linear-pipeline.md`). |
 | Stage 4b approval + dispatch | Set `{CONFIG.source_field_status}` to `{CONFIG.source_status_dispatched}` |
 
 Both are idempotent — always write.
