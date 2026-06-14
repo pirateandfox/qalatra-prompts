@@ -10,8 +10,8 @@ plan-approval gate, and **auto-merge is ON by default for all P&F repos** (they'
 pre-launch — see reverse-graduation in `pipeline-agent.md`). When the quality gates are green and the
 adversarial verifier returns `MERGE`, the pipeline merges to the base branch — which **is** the
 deploy (Railway / CI) — and closes the issue, with **no human gate**. Human touchpoints are now
-exception-only: `Blocked` (a decision the pipeline can't make) and the per-repo human-gated list
-(repos flipped to require `In Review → Approved` as they mature). Visibility is after-the-fact via the
+exception-only: `Blocked` (a decision the pipeline can't make) and any repo with `auto_merge: false`
+in its own `pipeline-config.md` (flipped to require `In Review → Approved` as it matures). Visibility is after-the-fact via the
 ship log → morning digest, not pre-merge review.
 
 The one exception path is **`Blocked`** — when the pipeline hits something it can't resolve
@@ -21,19 +21,24 @@ to `Blocked`, posts the blocker + the specific question as a comment, and fires 
 alert. `Blocked` is a visible "needs you" column with a live comment loop, so the decision
 doesn't get buried in a run log.
 
-## Merge Policy (auto-merge default + per-repo human gate)
+## Merge Policy (per-repo `auto_merge` flag)
 
-**Auto-merge is ON for every P&F repo by default.** Treat `CONFIG.auto_merge` as `true` for any P&F
-repo regardless of what its `pipeline-config.md` says, **unless** the repo is in the human-gated list
-below. With auto-merge on, the **adversarial verifier's `MERGE` verdict is the approval** — the
-pipeline does not wait for a human to set `Approved`; it merges and closes the issue itself.
+**The switch is each repo's `auto_merge` flag in its own `pipeline-config.md` — read it and honor it
+directly. There is no central override list.**
 
-**Human-gated repos** (require a human `In Review → Approved` before merge):
-- _(none yet)_
+- **`auto_merge: true`** → the adversarial verifier's `MERGE` verdict **is** the approval. The
+  pipeline merges and closes the issue itself, straight from `In Progress`, never stopping at
+  `In Review`. This is the default for these greenfield / pre-launch repos.
+- **`auto_merge: false`** → human gate: at QA_READY the pipeline sets `In Review` and waits for
+  Justin to set `Approved` before merging.
 
-Reverse-graduation knob: everything not on this list auto-merges. Flip a repo to human-gated — add its
-name above — one at a time, as it crosses the stakes threshold (real user volume, revenue-bearing,
-production-critical). Don't gate repos pre-emptively; the verifier + ship log are the safety net.
+**Current state:** every P&F repo is `auto_merge: true`. (Monroe and Biz to Biz are separate
+deployments with their own flavor docs — not governed here.)
+
+Reverse-graduation knob: a repo earns its way *into* human review as its stakes rise (real user
+volume, revenue-bearing, production-critical) — flip **its own** `auto_merge` to `false` in its
+`pipeline-config.md`, one at a time. Don't gate repos pre-emptively; the verifier + ship log are the
+safety net.
 
 ---
 
