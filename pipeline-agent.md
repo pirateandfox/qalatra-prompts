@@ -538,15 +538,24 @@ you deliberately flip `auto_merge: false` and pay for a human gate to buy down f
 verifier's per-repo track record (and incident history) is the signal for *when* a repo has crossed
 that line (see trust-architecture).
 
+**Scope:** "verifier `MERGE` = approval, merge on it" is the **Linear flavor's** model
+(`linear-pipeline.md`). Other deployments keep their own approval gate even when `auto_merge: true`:
+Monroe is human-merge, and Biz to Biz auto-merges only on its `Ready for Production` status — the
+verifier is an *added* quality gate for them, **not** the merge trigger. The executable rule is
+Stage 4b step 1: skip the approval check only for Linear `auto_merge: true`; every other deployment
+reads its configured approval status.
+
 ---
 
 **When Intelligence Check passes (mechanical gates green + zero unresolved threads + verifier `MERGE`) → QA_READY:**
 
-> **Auto-merge-on-verifier flavors** (e.g. `linear-pipeline.md` auto-merge repos, where the verifier
-> `MERGE` verdict *is* the approval): **skip steps 3–5 below** — no staging/`ready_for_testing` status
-> write, no human review task. Proceed directly to Stage 4b to merge, and keep the issue in the
-> work-in-progress state (never a review state) if the merge can't complete this pass. The numbered
-> steps below are the **human-gated path** only.
+> **Does your source-system flavor doc override QA_READY routing?** Only the **Linear flavor with
+> `auto_merge: true`** does (`linear-pipeline.md` → Merge Policy): there the verifier `MERGE` verdict
+> *is* the approval, so **skip steps 3–5 below** (no `ready_for_testing` write, no review task), go
+> straight to Stage 4b, and keep the issue in the work-in-progress state — never a review state — if
+> the merge can't complete this pass. **Every other deployment uses the numbered steps below
+> unchanged**: Notion/Monroe and Biz to Biz both still write `ready_for_testing` and wait for their
+> configured approval status. Do not skip unless your own flavor doc explicitly says so.
 
 1. If `{CONFIG.qa_reviewer_id}` is set → `update_task({ taskId, qaAssigneeId: "{CONFIG.qa_reviewer_id}" })`
 2. If `{CONFIG.source_field_preview_url}` is set → `get_preview_status({ taskId })` and write the returned URL to `{CONFIG.source_field_preview_url}` on the source task (same Notion update pattern as other fields). Skip silently if no URL is returned.
@@ -568,9 +577,11 @@ that line (see trust-architecture).
 On every tick, for tasks at `PR_OPEN`, `PREVIEW_READY`, `REVIEW_DONE`, `QA_READY`:
 
 1. **Check approval status in source system:**
-   **Auto-merge-on-verifier flavors** (e.g. `linear-pipeline.md` auto-merge repos): the verifier
-   `MERGE` already cleared this — **skip this approval check** and proceed to step 2. (Otherwise:)
-   Fetch source task and read the approval field. Compare to `{CONFIG.source_status_approved}`.
+   **Skip this check only for the Linear flavor with `auto_merge: true`** (`linear-pipeline.md`),
+   where the verifier `MERGE` already *is* the approval → proceed to step 2. **All other deployments
+   do this check** — Notion/Monroe, Biz to Biz (whose gate is its `Ready for Production` status), and
+   any `auto_merge: false` repo: fetch source task and read the approval field. Compare to
+   `{CONFIG.source_status_approved}`.
    - Not approved → skip, `STAGE_4B_WAITING`
    - Approved → proceed
 
@@ -648,7 +659,7 @@ Mid-pipeline writes to keep the team's task board in sync.
 |---|---|
 | Stage 3 entry: FD URL confirmed in `task.links` | Write FD URL to `{CONFIG.source_field_flightdesk_url}` |
 | Stage 3: PR open | Write PR URL to `{CONFIG.source_field_github_url}` (if configured) |
-| Stage 4 all-green (`QA_READY`) | Set `{CONFIG.source_field_status}` to `{CONFIG.source_status_ready_for_testing}` — **human-gated path only. Auto-merge-on-verifier flavors skip this**: they merge straight to `Done` and must never write a review state (for Linear, `In Review` is excluded from discovery, so writing it orphans the issue — see `linear-pipeline.md`). |
+| Stage 4 all-green (`QA_READY`) | Set `{CONFIG.source_field_status}` to `{CONFIG.source_status_ready_for_testing}`. **Skip only for the Linear flavor with `auto_merge: true`** — it merges straight to `Done` and must never write a review state (`In Review` is excluded from Linear discovery, so writing it orphans the issue — see `linear-pipeline.md`). Notion/Monroe and Biz to Biz still write it. |
 | Stage 4b approval + dispatch | Set `{CONFIG.source_field_status}` to `{CONFIG.source_status_dispatched}` |
 
 Both are idempotent — always write.
