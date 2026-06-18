@@ -161,7 +161,7 @@ when the path's prefix doesn't exist locally (swap the prefix up to `/<repo>/` w
 ## Planner Source-System Overrides (vs canonical plan-agent.md)
 
 - Ignore `{EXECUTE_AGENT_PATH}` — execution kickoff is the orchestrator's job.
-- Step 8 equivalent: post the full plan as a **Linear comment** (markdown, one comment).
+- Step 8 equivalent: post the full plan as a **Linear comment** (markdown, one comment). **Post it via the `SHI_LINEAR` GraphQL/curl `commentCreate` path from Identity & Access — never the claude.ai Linear connector MCP tool.** The connector authors as **Justin**, not Shi; the orchestrator's Planning turn-taking reads the last comment's author (`62e2dc3d…` Shi = pipeline asked, waiting on human), so a planner comment posted as Justin looks like a human reply and mis-fires the next run — a re-engage loop, or (if the plan task is `done`) an auto-kickoff into an auto-merge repo. **Every** Linear write the planner makes (plan, questions, revision notes) goes through the curl path so it authors as Shi — curl only, no connector.
 - Step 9 equivalent: **leave status at `Planning`** — the orchestrator advances it (no `Needs Plan Review` state in dangerous mode; the `plan-gate` label is the opt-in hold).
 - Conversational loop: questions are Linear comments; revise the existing plan comment thread incrementally, don't repost the whole plan unless it materially changed.
 - Revision mode: if the Qalatra task description says "REVISION of already-deployed work," plan only the delta on a new branch off the current base branch.
