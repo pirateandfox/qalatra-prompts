@@ -395,8 +395,8 @@ gh api repos/{CONFIG.github_slug}/issues/{prNumber}/comments
 ```
 The Claude Code review is typically a review submitted by a bot (e.g. `claude[bot]` or a GitHub Actions actor). Read its full body. At this point the `claude-review` check has PASSED (meaning Claude's overall verdict was "looks good") — but a passing review often still contains suggestions, optimizations, and notes that FD did not inject because they were non-blocking. Read and act on them.
 
-**Step 2 — Read original spec:**
-Fetch the source task (Notion/Linear/Asana) and extract the full task description and any requirements in the page body.
+**Step 2 — Read original spec AND the committed plan:**
+Fetch the source task (Notion/Linear/Asana) and extract the full task description and any requirements in the page body. **Also read the committed plan** (`git show origin/{CONFIG.base_branch}:agents/plan/plans/<plan-file>.md`, path from the source task's links / kickoff prompt) — the plan's acceptance criteria / Definition of Done is the authoritative scope contract, and is usually more explicit than the issue. If no plan was committed, note it: the author may have reconstructed scope blind, so scrutinize coverage harder below.
 
 **Step 3 — Read repo quality gates:**
 Read `{CONFIG.config_path}` / `agents/pipeline-config.md` for configured quality requirements, especially:
@@ -418,14 +418,14 @@ For large diffs, read `--stat` first, then targeted per-file diffs.
 **Step 5 — Assess:**
 Reason through all inputs together:
 
-1. **Spec vs. implementation:** Does the diff actually address what was asked? Are there explicit requirements in the spec that aren't reflected in the changes?
+1. **Scope coverage (enumerate, don't eyeball):** List every discrete requirement from the spec **and the plan** — each acceptance criterion, Definition-of-Done bullet, numbered scope item — and for each, confirm where the diff satisfies it or mark it missing/partial. Treat a missing or half-done requirement as blocking, the same as a bug. A multi-part task (e.g. "fix X **and** add Y") where the diff only covers the headline part is the classic blind-reconstruction miss — the headline ships, the secondary requirement silently drops. Inject the missing items.
 2. **Claude Code review:** Does the review flag any bugs, security issues, incorrect logic, missing edge cases, or significant functional gaps? Read the full text — do not rely on the pass/fail status alone. **Verify each flagged item against the *current* branch head before treating it as real.** Long-form reviews (the Claude review especially) are generated against the commit that existed when they ran, and go stale the moment a later commit addresses the finding — GitHub marks such threads `isOutdated`. A finding the current code already handles is *not* a real issue: reply on the thread noting it's already addressed and resolve it (Step 6), do **not** re-inject it into the session.
 3. **Unresolved comments:** Are there inline review comments or general PR comments that haven't been addressed in a follow-up commit or reply?
 4. **Configured quality gates:** If the repo defines a coverage target such as `new_code_coverage_target: 80%`, do the reports show the target was met for changed/new code? If the target cannot be measured, is that a CI/configuration gap that must be surfaced? If the PR adds new behavior but no tests, require tests unless the config explicitly exempts the task type.
 
 **What to flag:**
 - Bugs, security issues, incorrect logic
-- Missing required functionality explicitly stated in the spec
+- Missing required functionality explicitly stated in the spec **or plan** (any unimplemented acceptance criterion / DoD item — partial scope is blocking)
 - Anything flagged in the Claude Code review — optimizations, code quality improvements, edge cases, missing tests, performance concerns, unclear naming, anything the reviewer thought worth mentioning
 - Unresolved inline comments or review threads
 - Configured coverage targets not met, not measured, or unsupported by the current PR/CI setup
@@ -498,6 +498,9 @@ is *zero shared context* with the author session; it sees only facts, not the au
 ```bash
 HEAD_SHA=$(git rev-parse origin/<branchName>)
 SPEC=$(…source task description + body…)
+# The committed plan is the authoritative Definition of Done — read it from the base branch, NOT the
+# author's narrative. Resolve the plan path from the source task's links / the kickoff prompt.
+PLAN=$(git show origin/{CONFIG.base_branch}:agents/plan/plans/<plan-file>.md 2>/dev/null)   # empty if no plan was committed
 DIFF=$(git diff origin/{CONFIG.base_branch}...origin/<branchName>)
 REVIEW=$(gh api repos/{CONFIG.github_slug}/pulls/<prNumber>/reviews --jq '.[].body')
 
@@ -508,7 +511,14 @@ NEEDS_WORK and return ONLY JSON:
 {\"verdict\":\"MERGE|NEEDS_WORK\",\"blocking\":[{\"file\":\"\",\"line\":0,\"issue\":\"\",\"evidence\":\"\"}],\"summary\":\"\"}
 
 Check, against the CURRENT head only:
-1. Does the diff actually implement the SPEC? Any explicit requirement missing or only partially done?
+1. SCOPE COVERAGE (do this first, explicitly). Enumerate EVERY discrete requirement in the SPEC and
+   PLAN — each acceptance-criterion, Definition-of-Done bullet, and numbered scope item — and for each
+   one, point to where the DIFF satisfies it or mark it MISSING/PARTIAL with evidence. A spec/plan
+   with N requirements where the diff implements only some is NEEDS_WORK — **partial scope is a
+   blocking failure, not a nit.** Authors that reconstructed scope without the plan (e.g. inferred it
+   from the branch name) routinely ship the headline fix and silently drop a secondary requirement —
+   a requested toggle, a second view, an acceptance criterion. If PLAN is empty AND the SPEC implies
+   more than the diff delivers, flag the missing scope and that no plan was committed to verify against.
 2. Real bugs, security holes, broken edge cases, or data-loss risk introduced by THIS diff.
 3. Claimed fixes — actually present in the current code, or merely asserted?
 4. Any Copilot/Claude review finding genuinely still unaddressed in the current head (ignore ones
@@ -517,6 +527,9 @@ Ignore style/nits. Only list issues you can point to with file + concrete eviden
 
 SPEC:
 $SPEC
+
+PLAN (authoritative Definition of Done; if empty, no plan was committed — scrutinize scope harder):
+$PLAN
 
 DIFF:
 $DIFF
