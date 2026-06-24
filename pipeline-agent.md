@@ -230,6 +230,16 @@ Ignore accidental user messages or `[Request interrupted by user]` at the end.
 
 4. **Session hit an unresolvable error** → flag `NEEDS_ATTENTION`
 
+**Before nudging or escalating, read what the session actually said — and check for produced work.**
+Always pair `claude_session_get_transcript({ session_id, last_n: 8 })` with `claude_session_get_state({ session_id })`. The bridge transcript is **eventually consistent** — assistant turns can lag the cloud session by *hours*, so "only user turns visible" / "no assistant turns" is **not** evidence the session is idle, unresponsive, or wedged. Cross-check before acting:
+- `branchBar.featureBranch` populated (`additions`/`deletions` > 0) **or** a remote branch exists (`gh api repos/{CONFIG.github_slug}/branches/<branch>`) → **the session has produced work; it is not wedged.** Do not kill, re-dispatch, or raise a "stalled session" alert. Route to PR creation below.
+- The last assistant turn names a blocker → respond to **that** blocker. Never re-send a generic "are you stuck?" nudge over the top of an answer you haven't read.
+
+**Branch pushed, no PR → open the PR on-box; never nudge the session to open it.**
+If a branch is pushed and no PR exists — **including** when the session reports it is blocked opening its own PR (e.g. its cloud-side GitHub MCP is disconnected, the common case) — PR creation is the pipeline's job: `claude_session_create_pr({ session_id })`. Do **not** inject "open the PR" / "create the PR" to the session (canonical rule — see *Stage 3: Open PR*); the cloud env's git/PR tooling is unreliable and asking it to do the pipeline's job is how a finished session gets misread as stuck. Log `STAGE_3_PR_OPENED_ONBOX`.
+
+**Never kill + re-dispatch while a feature branch with commits exists on the remote** — that discards pushed work and risks two sessions double-pushing the same branch. Recovery = adopt the existing branch (attach + open PR), not restart. Kill + re-dispatch is only for a confirmed-dead session with **no** pushed branch.
+
 **Branch diff check:**
 ```bash
 git fetch origin <branchName>
