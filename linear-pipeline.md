@@ -171,7 +171,7 @@ when the path's prefix doesn't exist locally (swap the prefix up to `/<repo>/` w
 - Task discovery: the Linear query above (statuses `In Progress`, `Blocked`, `Changes Requested`, `Approved`), filtered to issues whose project routes to *this* repo.
 - FD task resolution: the `FlightDesk` attachment on the issue.
 - Status writes + comments: GraphQL patterns above. Quality-gate failures inject fix instructions into the session and stay at `In Progress` (no status spam).
-- **Blocked handling:** distinguish a *transient* gate failure (the pipeline can fix it itself by injecting instructions — stays `In Progress`) from a *human-decision* blocker (red gate on a pre-existing/unrelated issue, missing credential/input, out-of-scope dependency). On a human-decision blocker:
+- **Blocked handling:** distinguish a *transient* gate failure (the pipeline can fix it itself by injecting instructions — stays `In Progress`) from a *human-decision* blocker (red gate on a pre-existing/unrelated issue, missing credential/input, out-of-scope dependency, **or a cloud session that ends `ready` with an unanswered question / unresolved material decision — Stage 3 Session Assessment**). On a human-decision blocker:
   1. Move the issue to `Blocked` (`dbacf9b0-d78c-4e44-8f26-aafb19dab41c`).
   2. Post **one** comment stating the blocker + the specific question/decision (no internal provenance — this is Justin-facing).
   3. Fire the proactive alert as a Qalatra inbox task: `create_task({ title: "Blocked: <issue identifier> — <one-line blocker>", description: "<blocker + the decision needed>\n\n<issue url>", context: "coderepos", project: "<repo>", my_priority: 2, inbox: true })`. Dedup on the issue URL first so a still-blocked issue doesn't re-alert every run.

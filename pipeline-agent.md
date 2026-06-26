@@ -60,24 +60,37 @@ Plans are created by PM agents and manually approved by Justin before dispatch. 
 All three systems must be reachable before the pipeline runs.
 
 **1. Qalatra:** `ping({})` → `{ "ok": true, "ts": "..." }`
-- Hangs or errors → create reconnect task, **abort run entirely**
+- Hangs or errors → trip the breaker (below)
 
 **2. FlightDesk:** `list_projects({})`
-- Errors or times out → create reconnect task, **abort run entirely**
+- Errors or times out → trip the breaker (below)
 
 **3. Claude bridge:** `claude_sessions_list({})`
-- Returns `"No claude.ai tab is open"` or `"Chrome not connected"` → create reconnect task, **abort run entirely**. Without session data the pipeline makes wrong decisions.
-- Returns a list → call `claude_sessions_warm({})` immediately to hydrate all session branch bars (~2.5s per session). Subsequent `get_state` calls will return full branch data.
+- Returns `"No claude.ai tab is open"` or `"Chrome not connected"` → trip the breaker (below). Without session data the pipeline makes wrong decisions.
+- Returns `[]` (empty, **no error**) — this is the trap: the daemon answers cleanly even when the claude.ai tab is stale/logged-out, so "empty" ≠ "healthy + idle." **Discriminator:** if FlightDesk shows any active/`DISPATCHED` task for this repo (or one dispatched in the last ~90 min) but the bridge lists nothing / `get_state` returns "Session not found" for it, the bridge is **DOWN**, not idle → trip the breaker. Only treat `[]` as a genuine idle state when FD also shows nothing active.
+- Returns a non-empty list → call `claude_sessions_warm({})` immediately to hydrate all session branch bars (~2.5s per session). Subsequent `get_state` calls will return full branch data.
 
-**Creating reconnect tasks** (one per unavailable system, no duplicates):
-```
-create_task({
-  title: "Reconnect pipeline: [system] unavailable",
-  my_priority: 1,
-  context: "{CONFIG.reconnect_task_context}",
-  inbox: true
-})
-```
+**Trip the breaker** — when any critical system above is down, halting just this run isn't
+enough: the heartbeat re-fires every ~15 min and burns an agent spin-up re-discovering the
+same failure. Trip a circuit breaker instead — create a fix task, **pause the pipeline**,
+and stop running until a human resets it. Pipeline state lives in the source system / FD,
+not in the run, so resuming loses nothing.
+
+1. **Dedup:** if a `Pipeline paused:` task is already open in `{CONFIG.reconnect_task_context}`, just exit (breaker already tripped).
+2. **Create one fix task:**
+   ```
+   create_task({
+     title: "Pipeline paused: [system] down",
+     description: "[the specific failure + what to check]. Resume: re-enable the `Code Pipeline` heartbeat once fixed.",
+     my_priority: 1,
+     context: "{CONFIG.reconnect_task_context}",
+     inbox: true
+   })
+   ```
+3. **Pause:** disable the `Code Pipeline` Qalatra heartbeat (`toggle_heartbeat` off). A disabled heartbeat spins up **no agent at all** — that's the token saver. **Do not** retry, fall back to git/FD, or assess any session: a blind run produces confident-but-wrong state (the v1 "no branch" misread is the evidence).
+4. **Exit the run.**
+
+**Resume:** a human fixes the component, completes the fix task, and re-enables the `Code Pipeline` heartbeat. (An optional Shi-box watchdog that refreshes a stale claude.ai tab may clear the most common bridge failure and re-enable the heartbeat itself — a convenience on top of the breaker, never a replacement.)
 
 **Known bridge error states:**
 - `"No claude.ai tab is open"` → claude.ai not open in browser
@@ -196,7 +209,7 @@ gh pr view <prNumber> --repo {CONFIG.github_slug} --json state,statusCheckRollup
 
 **DISPATCHED — session has no branch, state is `ready`:**
 Read transcript: `claude_session_get_transcript({ session_id, last_n: 8 })`
-- Session asked a question or hit an unresolvable blocker → `update_task({ task_id, task_type: "task" })` (surfaces in inbox for Justin) + log `STAGE_3_NEEDS_HUMAN`
+- Session asked a question or hit an unresolvable blocker → **relay the question to where the human is already looking.** If the source system has a conversational blocked state (Linear — see source-system overrides), post the question onto the *issue* (as the pipeline identity) + move it to that state; the Qalatra `update_task({ task_id, task_type: "task" })` inbox task is the **alert**, not where the question lives. Log `STAGE_3_NEEDS_HUMAN`. (A question must never die in a transcript only the bridge can read.)
 - Session reports completion without a branch → Session Assessment handler
 
 **Notes:**

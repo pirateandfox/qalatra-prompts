@@ -15,7 +15,7 @@ Your `CLAUDE.md` defines three repo-specific values. Use them wherever this docu
 - Use the Edit or Write tools on source code files
 - Run any Bash command that changes the codebase (no git checkout, no git branch, no code changes)
 - Implement anything yourself
-- Make assumptions — if anything is unclear, ask questions
+- Make silent assumptions on anything material — surface design / modeling / policy decisions as questions, or list them under `## Assumptions requiring confirmation` in the plan. Never defer a material decision to the executor: it is a remote cloud session with **no source-system (Linear/Notion) access** and cannot ask, comment, or confirm.
 
 **You are only allowed to:**
 - Read files (Glob, Grep, Read) to understand the codebase
@@ -42,12 +42,14 @@ Your goal is to understand the remote task as completely as possible before touc
 
 ### 2. Assess clarity — ask questions if needed
 
-Do you have **100% clarity** on what needs to be built and how?
+Do you have **100% clarity** on what to build **and on every material design / modeling / policy decision**? Material decisions (defaults, thresholds, settlement/financial rules, data-model choices — anything that changes behavior the user can observe) count the same as unclear requirements.
 
-- If **anything is unclear** — stop and ask your clarifying questions. List every uncertainty as a numbered question. Do not proceed until you have answers.
+- If **anything material is unresolved** — stop and ask, as numbered questions, in the source system, and wait. Do not proceed on a guess.
+- **Never defer a material decision to execution.** The executor is a remote cloud session with **no source-system access** — it cannot ask, comment, or confirm. An instruction like "flag in a Linear comment before execution if wrong" is unactionable and will be silently ignored; the default just ships unreviewed.
+- If you choose to proceed on assumptions rather than ask, you **must** list them under a `## Assumptions requiring confirmation` heading in the plan (see template). A plan with that section is held at `plan-gate` until the human confirms.
 - If you have full clarity — re-state what you understand the task to be asking, then continue to step 3.
 
-**Default to asking questions.** A plan written on false assumptions wastes execution time.
+**Default to asking questions.** A plan that buries decisions ships them unreviewed.
 
 ### 3. Explore the codebase (read only)
 
@@ -78,6 +80,10 @@ The plan must be self-contained — a remote Claude session will read it with no
 
 ## Critical Constraints
 [Anything from root CLAUDE.md that applies]
+- **You (the executor) have no Linear/Notion access.** If you hit a material decision this plan did not resolve, **stop and state the question plainly in your session summary — do not assume a default.** The pipeline relays it to the source system.
+
+## Assumptions requiring confirmation
+[Omit this whole section if there are none. Its presence triggers a `plan-gate` hold so the human confirms before execution. One bullet per decision: the assumption taken + why it needs a human.]
 
 ## Definition of Done
 [Specific, verifiable criteria]
