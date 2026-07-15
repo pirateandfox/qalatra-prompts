@@ -87,10 +87,10 @@ not in the run, so resuming loses nothing.
      inbox: true
    })
    ```
-3. **Pause:** disable the `Code Pipeline` Qalatra heartbeat (`toggle_heartbeat` off). A disabled heartbeat spins up **no agent at all** — that's the token saver. **Do not** retry, fall back to git/FD, or assess any session: a blind run produces confident-but-wrong state (the v1 "no branch" misread is the evidence).
+3. **Pause:** disable the `Code Pipeline` Qalatra heartbeat — `update_heartbeat({ id: <heartbeat id>, active: false })`. This call is idempotent: it sets state rather than flipping it, so it is safe to call any number of times and a second disable from a still-in-flight run cannot re-arm an already-disabled heartbeat. A disabled heartbeat spins up **no agent at all** — that's the token saver. **Do not** retry, fall back to git/FD, or assess any session: a blind run produces confident-but-wrong state (the v1 "no branch" misread is the evidence).
 4. **Exit the run.**
 
-**Resume:** a human fixes the component, completes the fix task, and re-enables the `Code Pipeline` heartbeat. (An optional Shi-box watchdog that refreshes a stale claude.ai tab may clear the most common bridge failure and re-enable the heartbeat itself — a convenience on top of the breaker, never a replacement.)
+**Resume:** a human fixes the component, completes the fix task, and re-enables the `Code Pipeline` heartbeat — `update_heartbeat({ id: <heartbeat id>, active: true })`, equally idempotent. (An optional Shi-box watchdog that refreshes a stale claude.ai tab may clear the most common bridge failure and re-enable the heartbeat itself — a convenience on top of the breaker, never a replacement.)
 
 **Known bridge error states:**
 - `"No claude.ai tab is open"` → claude.ai not open in browser
