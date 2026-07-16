@@ -203,6 +203,22 @@ Anything not matched above. Log `FRAMEWORK_UNKNOWN` and flag for human before pr
 
 ---
 
+## Execution Kickoff — Cloud Prompt Paths (all deployments)
+
+The `--prompt` an orchestrator passes to `flightdesk register` / `claude … --remote` is executed in a
+**fresh cloud checkout** whose working directory is the repo root. Any path in that prompt must be
+**repo-relative** (e.g. `plans/2026-07-15-….md`), never box-absolute (`$WS/<repo>/…`, `/home/…`,
+`~/IdeaProjects/…`). A machine-absolute path does not exist in the cloud environment, so the session
+silently finds nothing and produces zero work — the root cause of a DOA kickoff (PIR-206,
+2026-07-15, cashcast).
+
+Rule for every flavor's kickoff step: keep box-absolute paths for *local* use only (the `cd` into the
+repo, resolving the plan file on disk); strip the `$WS/<repo>/` prefix to the repo-relative tail
+before putting a path in any prompt sent to the cloud. Applies to plan references and any other file
+the cloud agent is told to open.
+
+---
+
 ## Improvement Protocol
 
 When you fix a bug or improve behavior, decide which layer it belongs to before writing it anywhere:
