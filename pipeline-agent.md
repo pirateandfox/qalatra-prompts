@@ -281,13 +281,14 @@ For repos where `{CONFIG.framework}` = `nestled` and the diff shows generated fi
 3. `npx nx build api` — verify compilation
    - If TS errors in agent-written code → inject error to session, wait for `ready`, pull, re-run from step 2
 4. If `{CONFIG.sdk_command}` is set → run it (e.g. `pnpm sdk`)
-5. `git add -A && git commit -m "chore: regenerate codegen artifacts" && git push`
-6. If files were changed → inject: *"I ran pnpm db-update locally and pushed updated generated artifacts to the branch. Please run git pull to sync your working copy."* Then poll `get_state` until session moves to `running`.
+5. **Inspect the regen diff before committing.** If db-update *reverted* something the agent hand-added to a generated file (e.g. a new `@Field` on a generated model class), do **not** commit the wipe and do **not** keep the hand edit — both lose: committing breaks the feature, keeping it means the next regen silently deletes it. This is an architecture problem, not a codegen artifact: `git checkout` the reverted file, then inject a rework pointing the session at the repo's codegen-safe pattern for computed fields (nestled: an extension resolver — `@Resolver(() => Model)` + `@ResolveField` in a custom plugin, e.g. `user-extension.resolver.ts`). Wait for `ready`, pull, re-run from step 2.
+6. `git add -A && git commit -m "chore: regenerate codegen artifacts" && git push`
+7. If files were changed → inject: *"I ran pnpm db-update locally and pushed updated generated artifacts to the branch. Please run git pull to sync your working copy."* Then poll `get_state` until session moves to `running`.
    - **CRITICAL:** `injected: true` can be a false positive. Always verify state changes to `running`. If not, retry inject. Do NOT skip inject and call `create_pr` directly.
    - **Do NOT** mention "create the PR" in the inject message — PR is always created via `claude_session_create_pr`
    - If db-update produced no changes → skip inject
-7. `claude_session_create_pr(session_id)`
-8. `git checkout {CONFIG.base_branch}`
+8. `claude_session_create_pr(session_id)`
+9. `git checkout {CONFIG.base_branch}`
 
 **NX daemon troubleshooting:** If `nx build` hangs: `pkill -f "nx serve api"; pkill -f "nx daemon"; npx nx reset`
 
