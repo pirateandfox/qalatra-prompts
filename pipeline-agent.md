@@ -674,11 +674,24 @@ Log approved+merged: `STAGE_4B_MERGED` | waiting: `STAGE_4B_WAITING` | conflict:
 
 4. **Mark complete in source system** (see Source System Closeout)
 
-5. **Ship-log entry (if the flavor defines one):** a merge to the base branch *is* the deploy, so this
-   is the moment something went live. If the deployment/flavor specifies a ship log (P&F appends to
-   Justin's deploy log — see `linear-pipeline.md` → Pipeline-Agent overrides), write the entry here:
-   project · issue id + title · PR link · merge time · verifier verdict · auto-merged vs human-approved.
-   This is the compensating control that makes default auto-merge safe — after-the-fact visibility.
+5. **Ship-log entry (every flavor — always):** a merge to the base branch *is* the deploy, so this is
+   the moment something went live. **Always** append one line to the ship log in **the agent workspace
+   this pipeline runs under** — `$WS/<workspace>/briefs/shipped/YYYY-MM.md` (current month), where
+   `<workspace>` is this box's own projects-style workspace: `projects` (P&F), `mi-projects` (Monroe),
+   `moceanic-projects` (Moceanic), `biz-projects` (Biz to Biz). This is the same workspace whose
+   `briefs/` the box's other agents write to; if unsure, it is the workspace the orchestrator resolved
+   `$WS` from. Read-modify-write, **newest first**: group entries under a `## YYYY-MM-DD` header (create
+   the header if today's isn't already at the top; create the file with a `# Shipped — YYYY-MM` title if
+   absent). One line per merge, in this exact shape:
+   ```
+   - `HH:MM` · **<repo>** · <issue id> <issue title> · [PR #<n>](<pr url>) · verifier: <MERGE|n/a> · <auto-merged|human-approved>
+   ```
+   Merge time in 24h local; `verifier:` = the adversarial verifier's verdict at QA_READY (`n/a` if none
+   ran); `auto-merged` when it merged on verifier/`Approved` sign-off without Justin's manual review,
+   `human-approved` when Justin set `Approved`. This is the compensating control that makes default
+   auto-merge safe (after-the-fact visibility), **and** the primary source for the nightly fleet digest
+   each box emails to Shi (`shi/tools/fleet-alerting`) — never skip it on a successful merge. See
+   `linear-pipeline.md` for any P&F-specific notes.
 
 6. **Complete Qalatra task:** `complete_task(qalatra_task_id)`
 
