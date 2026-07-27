@@ -39,6 +39,68 @@ For scheduled monitor tasks, use a bounded window:
 - On the first run of a new day, complete stale active monitor tasks whose latest job is not `running` or `queued`.
 - If duplicate active monitor tasks exist for the same repo/day, keep the `running`/`queued` one if present, otherwise keep the newest; complete the stale duplicates.
 
+### Monitor back-off at human gates
+
+A monitor task exists to advance work. When **every** task in a repo's monitor set is parked on a
+human action — an approval, a merge click, an unanswered question — the monitor has nothing to do, but
+a fixed-cadence orchestrator relaunches it every pass anyway. Observed in a live deployment: one
+monitor resumed 7 times in 89 minutes against a single task whose only remaining move was a human
+clicking Approve; six runs were no-ops, the last four byte-identical.
+
+Two costs: **quota** (agent launches producing nothing, on boxes that go dark under usage caps), and
+**signal corruption** — monitor tasks run with `agent_resume`, so repeatedly resuming one session to
+re-confirm "nothing changed" trains the exact "nothing to do" reflex behind real resume-anchoring
+incidents, and makes a genuinely inert monitor indistinguishable from a correctly idle one.
+
+- **Do not dispatch a monitor when every task in that repo's monitor set is parked on a human action.**
+  Poll the gate each pass with one cheap read instead — a `gh pr view` on the PR plus the source task's
+  status / last-activity field. Dispatch the monitor agent only when that read shows movement: a merge
+  landing, a newly blocking merge state, the task leaving its parked status, or a new comment. Log
+  `PIPELINE_MONITOR_HELD` carrying the compared values, and refresh the monitor task description so the
+  comparison is stateless across passes and `last_touched_ai` stays fresh.
+
+- **Declare the eligible set — never infer it.** Each repo's config declares `human_gate_states`
+  (Trello deployments: `human_gate_lists`): the exact status values whose only remaining move is a
+  human action. **If the field is absent, the back-off does not engage** and the monitor dispatches as
+  it does today. Absence means "not yet classified," never "guess." Status vocabularies are not
+  portable across deployments: in the Linear flavor `Approved` is a *machine* turn (the pipeline merges
+  on it), so an issue resting there is a **bug signal** and must never be gate-eligible — while
+  Linear's actual human parking spot, `In Review`, is excluded from discovery and never enters the
+  monitor set at all.
+
+- **Keep a liveness floor of one dispatch per day**, satisfied by the day's first pass dispatching the
+  freshly created daily task. Do not use a sub-daily floor: monitor tasks run with `agent_resume`, so
+  repeatedly resuming a session that has nothing to do is itself the resume-anchoring failure — a
+  byte-identical monitor reply must stay a *signal*, not the expected steady state.
+
+- **Break the hold on age.** If a hold has persisted past `monitor_hold_max_hours` (default `4`),
+  dispatch once anyway and log `PIPELINE_MONITOR_HELD_EXPIRED`. Machine failures can leave a task
+  parked in a state that only *looks* like a human gate — a plan task stuck `active` after its job
+  completed, a manual merge that bypassed closeout — and in those cases the monitor is the thing that
+  would have noticed. Without this escape, back-off converts a self-healing stall into a permanent one.
+
+- **Create the daily monitor task fresh; never carry one over.** Detect a carry-over by `created_at`,
+  not by title. The daily roll is the only thing that reliably retires an anchored session.
+
+- **Do not trigger dispatch on a page's `updated_at`** — it fires on edits that change nothing
+  actionable. Use the newest comment's timestamp instead.
+
+- **Never arm a separate `Monitor` and exit.** A per-repo monitor must resolve its own waits within the
+  run: poll `gh pr checks` inline up to its budget, then either complete the hand-off or report the
+  outstanding checks explicitly and stop. A monitor that hands off its own waiting has no owner; the
+  armed callback dies with the job.
+
+- **Reconcile human comments against current state before any human hand-off status flip.** Before
+  moving a source task to a merge/approval hand-off such as `Ready to Merge`, read the newest human
+  comment and verify its ask is satisfied by the current head/diff. If the newest human comment is
+  newer than the relevant commit or state change and is not visibly answered, treat it as work, not a
+  hand-off. Judge by content plus state comparison, never by authorship or board position alone.
+
+- **Back-off applies to monitor dispatch only — never to the orchestrator heartbeat.** Box watchdogs
+  key on the `Code Pipeline` heartbeat's job rows and on run-log freshness. The orchestrator must keep
+  firing and keep writing its run log every pass, including passes where every repo is held. Raising
+  the back-off into the heartbeat would silently blind the dead-man's switch.
+
 No Qalatra feature change is required for this pattern. Existing primitives are enough: `get_tasks_by_agent`, `create_task`, `update_task`, `queue_agent_job`, and `complete_task`.
 
 ---
@@ -75,6 +137,9 @@ One file per code repo. Defines everything specific to that codebase:
 | `notion_field_*` | field names for status, FlightDesk URL, GitHub URL |
 | `notion_status_*` | exact status string values |
 | `notion_pickup_statuses` | statuses that mean "ready to be worked on" |
+| `human_gate_states` | optional exact source-system status values where the only remaining move is human; if absent, monitor back-off is disabled |
+| `human_gate_lists` | Trello equivalent of `human_gate_states`; exact list names or IDs where the client/human acts |
+| `monitor_hold_max_hours` | optional max age for a human-gate hold before dispatching once anyway; default `4` |
 | `notion_routing_field` | for multi-repo deployments (Monroe pattern) |
 | `qa_reviewer_id` | FlightDesk user ID, or `none` |
 | `auto_merge` | `true` = merge+deploy on approval; `false` = skip |
