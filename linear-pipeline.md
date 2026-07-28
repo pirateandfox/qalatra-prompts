@@ -49,13 +49,13 @@ safety net.
 | Agent identity | **Shi** — real Linear member, `shi@pirateandfox.com` |
 | Shi user ID | `62e2dc3d-544c-428a-ba8f-f9236b91c16e` |
 | Justin user ID | `2765d8ea-bacc-4f97-86ae-01e5314f98b5` |
-| API token | `~/.config/qalatra/secrets.md` → line `SHI_LINEAR=` (personal API key of the Shi account — all API actions author as Shi) |
+| API token | `secret get SHI_LINEAR` (personal API key of the Shi account — all API actions author as Shi). Never read a secrets file directly: the store is per-service at `~/.config/qalatra/secrets.d/<service>.env` and `~/.config/qalatra/secrets.md` is retired (renamed to `secrets.md.disabled` on 2026-07-28) — a `grep ... secrets.md` returns empty and every subsequent Linear call 401s. |
 | Team | Pirate & Fox (`PIR`) — `f3a51891-3a53-45f1-9a8c-f14bf79fcb43` |
 
 All Linear access is **GraphQL via curl** (headless-safe — never depend on the claude.ai Linear connector):
 
 ```bash
-KEY=$(grep "^SHI_LINEAR" ~/.config/qalatra/secrets.md | head -1 | cut -d= -f2)
+KEY=$(secret get SHI_LINEAR)
 curl -s -X POST https://api.linear.app/graphql \
   -H "Authorization: $KEY" -H "Content-Type: application/json" \
   -d '{"query":"<QUERY>"}'
