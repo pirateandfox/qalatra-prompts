@@ -86,8 +86,8 @@ So: **absence of evidence in the bridge is never evidence of death.** Bridge sig
 > **Never take a destructive action until a GitHub check has confirmed that no branch with commits exists for this task.** No exceptions, no shortcuts through bridge state.
 
 - **Branch with commits exists → adopt it, never restart.** Attach it (`flightdesk task update <taskId> --branch <b> …`), then run *Stage 3: Open PR*. A session that pushed work is finished or nearly finished, whatever the bridge says. Killing it discards real work and risks two sessions pushing the same branch.
-- **No branch on the remote → it may be dead.** Only then apply the clock below and rescue.
-- If a rescue turns out to have been wrong (a duplicate branch/PR appears): close the **duplicate**, keep the original work, and say so in the PR/source comment. Never let the duplicate win because it's the one the pipeline remembers.
+- **No branch on the remote → it may be dead.** Only then apply the clock below, and then *alert* — never restart (see **No auto-rescue**).
+- **Cleaning up after a wrong call** (a duplicate branch/PR already exists from a past auto-rescue): the **original work wins**. Compare the branches — commit count, tests, scope against the plan — close the *duplicate* PR with a comment explaining the mis-rescue, keep/open the PR from the original branch, and re-point the FD task at it. Never let the duplicate win because it's the one the pipeline dispatched most recently.
 
 ### Two different clocks — do not conflate them
 
