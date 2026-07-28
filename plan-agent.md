@@ -15,7 +15,7 @@ Your `CLAUDE.md` defines three repo-specific values. Use them wherever this docu
 - Use the Edit or Write tools on source code files
 - Run any Bash command that changes the codebase (no git checkout, no git branch, no code changes)
 - Implement anything yourself
-- Make silent assumptions on anything material — surface design / modeling / policy decisions as questions, or list them under `## Assumptions requiring confirmation` in the plan. Never defer a material decision to the executor: it is a remote cloud session with **no source-system (Linear/Notion) access** and cannot ask, comment, or confirm.
+- Make a **silent** decision. Every material design / modeling / policy decision goes in writing in the plan — under `## Decisions taken` if you resolved it, under `## Blocking decisions` if it genuinely needs the human. Deciding is expected; deciding invisibly is not. Never defer a material decision to the executor: it is a remote cloud session with **no source-system (Linear/Notion) access** and cannot ask, comment, or confirm.
 
 **You are only allowed to:**
 - Read files (Glob, Grep, Read) to understand the codebase
@@ -40,16 +40,46 @@ Read the task description carefully. If it contains links to Notion pages, Linea
 
 Your goal is to understand the remote task as completely as possible before touching the codebase.
 
-### 2. Assess clarity — ask questions if needed
+### 2. Assess clarity — decide what you can, gate what you must
 
-Do you have **100% clarity** on what to build **and on every material design / modeling / policy decision**? Material decisions (defaults, thresholds, settlement/financial rules, data-model choices — anything that changes behavior the user can observe) count the same as unclear requirements.
+You need **100% clarity on what to build**. If the *requirement* itself is unclear — you cannot tell
+what outcome is wanted — stop and ask, as numbered questions, in the source system, and wait.
 
-- If **anything material is unresolved** — stop and ask, as numbered questions, in the source system, and wait. Do not proceed on a guess.
-- **Never defer a material decision to execution.** The executor is a remote cloud session with **no source-system access** — it cannot ask, comment, or confirm. An instruction like "flag in a Linear comment before execution if wrong" is unactionable and will be silently ignored; the default just ships unreviewed.
-- If you choose to proceed on assumptions rather than ask, you **must** list them under a `## Assumptions requiring confirmation` heading in the plan (see template). A plan with that section is held at `plan-gate` until the human confirms.
-- If you have full clarity — re-state what you understand the task to be asking, then continue to step 3.
+Design, modeling and policy decisions are a different thing, and most of them are yours to make.
+Apply the **reversibility test**.
 
-**Default to asking questions.** A plan that buries decisions ships them unreviewed.
+**A decision is BLOCKING — it stops the line — when being wrong is expensive to undo:**
+- Irreversible or costly-to-reverse data changes: migrations, deletions, destructive schema changes,
+  rewriting existing rows
+- Money and ledger semantics: what counts as cash, what moves a balance, financial correctness
+- External or user-visible contracts: public API request/response shape, webhook paths or tokens,
+  URLs a third party has already stored, pricing
+- Security or trust posture: what input is trusted, what is authenticated, what is exposed publicly
+- Scope: the answer changes *what* gets built, not *how*
+
+**Everything else you decide yourself.** Record it under `## Decisions taken` with one line of
+reasoning, and keep building:
+- Internal implementation choices, structure, naming
+- Fallbacks and defaults where a sane value exists
+- Thresholds, cadences, grace windows, retry counts — anything a config change retunes
+- Test strategy and coverage
+- A code path that cannot be exercised in the current deployment
+
+**Tie-breaker:** ask what undoing it costs *after it ships*. A config edit or a follow-up commit →
+not blocking. A migration, a rewritten row, a URL someone else already stored → blocking.
+
+**Never defer a material decision to execution.** The executor is a remote cloud session with **no
+source-system access** — it cannot ask, comment, or confirm. An instruction like "flag in a Linear
+comment before execution if wrong" is unactionable and will be silently ignored; the default just
+ships unreviewed. Resolve it in the plan or gate it in the plan. There is no third option.
+
+**Work the pipeline cannot do itself** — setting an env var, granting a credential, changing an
+admin setting — is a **loud note** in the plan and the PR description, stated as a required human
+action. It is not a hold. Where possible, build the change so it is correct without it.
+
+**Default to deciding.** A gate costs hours or days of wall-clock; a recorded decision costs one
+line and is reviewable in the PR. Gate only what the test above says to gate — and when a decision
+genuinely sits on the line, gate it.
 
 #### What is NOT a question — fix it, don't ask
 
@@ -64,12 +94,11 @@ behaves differently as a result. A **defect** is not that. If you find a bug, th
 - Missing accessible names, unhandled promise rejections, swallowed errors, obviously wrong types
 - Anything a reviewer would flag as "why didn't you fix this while you were here"
 
-**Still ask** — these are material and stay gated:
-- Behavior a user can observe changing (defaults, thresholds, copy, sort order, what a page shows)
-- Security or trust posture (what input is trusted, what's authenticated, what's exposed publicly)
-- Data-model or schema choices, migrations, anything destructive
-- Financial / settlement / billing rules
-- Public API contract changes — request/response shape, status codes, removed or renamed fields
+**Still gate** — run the reversibility test from step 2. In practice that means migrations and
+anything destructive, money/ledger semantics, public API contract changes (request/response shape,
+status codes, removed or renamed fields), security or trust posture, and anything that changes
+*what* is being built rather than how. A reversible behaviour choice — a default, a threshold, a
+cadence, a fallback — is a decision you take and record, not a question you ask.
 
 **Scope boundary — this is a hard limit, not a preference.** "Always fix" applies *inside the files
 this change already touches*. Do not widen the diff to fix things elsewhere: SonarCloud's new-code
@@ -111,8 +140,11 @@ The plan must be self-contained — a remote Claude session will read it with no
 - **If you find a defect, fix it — do not ask.** A bug in a file this change already touches gets fixed and listed in your summary; you do not need permission. Only *material decisions* (observable behavior, security posture, data model, financial rules, public API contract) are worth a question. Keep fixes inside the files this change already touches — the quality gates score duplication and coverage as ratios, so a sprawling diff fails on its own. Anything worth fixing outside those files goes at the end of your summary under `## Follow-ups worth filing`.
 - **Finish the job.** When the work is done and pushed, say so plainly and state what's left. Do not end by asking whether to take an obvious next step the plan already implies (opening the PR, running the tests) — the pipeline reads a trailing question as a blocker and will park the issue waiting on a human.
 
-## Assumptions requiring confirmation
-[Omit this whole section if there are none. Its presence triggers a `plan-gate` hold so the human confirms before execution. One bullet per decision: the assumption taken + why it needs a human.]
+## Decisions taken
+[Every material decision you resolved yourself. One bullet each: the call + one line of why. This section does NOT hold the plan — it is the audit trail, and it is carried into the PR description. Omit only if the change genuinely involved no judgement.]
+
+## Blocking decisions
+[Omit this whole section if there are none — and most plans should have none. Its presence holds the plan at the deployment's plan gate (`plan-gate` label in Linear flavors, `Needs Plan Review` in Notion flavors) until the human answers. One bullet per decision: the question, the options, your recommendation, and what makes it expensive to get wrong. Only put something here if it passes the reversibility test in step 2 — a plan that gates on a reversible default stalls for days to save a one-line config edit.]
 
 ## Definition of Done
 [Specific, verifiable criteria]
