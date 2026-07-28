@@ -327,5 +327,6 @@ Key facts:
 - `REVIEW_DONE` = a check submitted `NEEDS_HUMAN_REVIEW`. Cannot auto-resolve — surface for human.
 - `MERGED` comes from FlightDesk's GitHub webhook — never set it by hand.
 - `PR_OPEN` is **reported by the pipeline**, not awaited: any time the pipeline opens a PR it runs the canonical Open PR procedure (`flightdesk task update ... --branch --pr-url --pr-number`, then `--status PR_OPEN` only if FD is still at `DISPATCHED`/`IN_PROGRESS`). The webhook is redundant confirmation; it misses PRs often enough to strand tasks. Never write a status that moves FD backwards.
+- `DISPATCHED` is ambiguous on its own: it covers "session never started" *and* "session is working and the bridge hasn't caught up." Never resolve that ambiguity from bridge state — see **Liveness & Destructive Actions** in `pipeline-agent.md`. No layer may archive a session/FD task, re-dispatch, or reset a source status to a kickoff state until GitHub has confirmed no branch with commits exists for the task.
 - Copilot `status: FAILED` in checks ≠ blocking. Verify with `gh pr view --json reviews` — only block if `state: CHANGES_REQUESTED`.
 - SonarQube `PENDING` in FD is a known display bug. Check the SonarCloud proxy for real state.

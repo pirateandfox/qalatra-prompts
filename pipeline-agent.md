@@ -51,6 +51,74 @@ Plans are created by PM agents and manually approved by Justin before dispatch. 
 
 ---
 
+## Liveness & Destructive Actions — binding rule for every layer
+
+**Applies to every path in every layer** — canonical stage handlers, deployment orchestrators, per-repo pipeline agents, and any watchdog/rescue/reaper anyone writes later. If a lower layer defines its own "dead session" detection, it inherits this rule; it may add conditions, never remove them.
+
+**Destructive actions** = archiving a cloud session, archiving a FlightDesk task, killing + re-dispatching, resetting a source-system status back to a kickoff state (`Active` / `Todo` / equivalent), or queueing a replacement task. All of these can produce a **duplicate dispatch**, which is the expensive failure: two sessions on one task, redundant work, a second PR, and a real branch abandoned in favor of a worse one.
+
+Two rules govern them, in order: (1) bridge state can never establish death, and (2) even a *confirmed* death is reported to Justin, never auto-restarted — see **No auto-rescue** below.
+
+### The bridge is not ground truth
+
+`claude_session_get_state`, `claude_sessions_list`, and `claude_session_get_transcript` all read a claude.ai tab. They are **eventually consistent and tab-dependent**:
+- Assistant turns can lag the cloud session by *hours* — "no assistant turns" is not idleness.
+- `branchBar` / `featureBranch` can be empty while the session has already pushed commits.
+- `claude_sessions_list` returns `[]` **cleanly, with no error**, when the tab is stale or logged out (see Step 0) — "no session" can mean "no eyes," not "no session."
+
+So: **absence of evidence in the bridge is never evidence of death.** Bridge signals may confirm liveness; they may never, alone, establish death.
+
+### Evidence ladder — check in this order
+
+1. **GitHub (ground truth).** Does a branch exist for this task, and does it have commits?
+   ```bash
+   gh api repos/{CONFIG.github_slug}/branches/<branchName>            # if a branch name is known
+   gh pr list --repo {CONFIG.github_slug} --head <branchName> --json number,url --limit 1
+   # branch name unknown (the usual case for a suspected-dead kickoff):
+   gh api "repos/{CONFIG.github_slug}/branches?per_page=100" --jq '.[].name' | grep '^claude/'
+   ```
+   Match candidates by task slug and recency, then confirm with the branch's commit log. Work on the remote is the only signal that cannot be a stale read.
+2. **FlightDesk task record** — status, `branchName`, `prUrl`.
+3. **Bridge state / transcript** — corroborating detail only.
+
+### Precondition for any destructive action
+
+> **Never take a destructive action until a GitHub check has confirmed that no branch with commits exists for this task.** No exceptions, no shortcuts through bridge state.
+
+- **Branch with commits exists → adopt it, never restart.** Attach it (`flightdesk task update <taskId> --branch <b> …`), then run *Stage 3: Open PR*. A session that pushed work is finished or nearly finished, whatever the bridge says. Killing it discards real work and risks two sessions pushing the same branch.
+- **No branch on the remote → it may be dead.** Only then apply the clock below and rescue.
+- If a rescue turns out to have been wrong (a duplicate branch/PR appears): close the **duplicate**, keep the original work, and say so in the PR/source comment. Never let the duplicate win because it's the one the pipeline remembers.
+
+### Two different clocks — do not conflate them
+
+| Question | Signal | Healthy window |
+|---|---|---|
+| Did a cloud **session** ever start? | FD flips `DISPATCHED` → session exists / `IN_PROGRESS` | ~1–2 min; **> 1 h with no session record at all** = genuinely dead kickoff |
+| Has the session **produced work** yet? | first branch push on the remote | routinely 2 h+; **never read "no branch" as death before 3 h** |
+
+A silently-failed kickoff means **FlightDesk holds the record and no session was ever created**. An empty `branchBar` on a session that *does* exist is a work-progress signal on the slow clock — it is *not* a dead kickoff, and must never be fed into the fast clock's 1-hour rule. That conflation is exactly how a live session gets archived as a "rescue."
+
+### ⛔ No auto-rescue. A dead task is reported, never restarted.
+
+**Justin's standing rule (2026-07-28): the pipeline never re-dispatches a dead execution task, and never creates a replacement task for one.** When a cloud execution session is confirmed dead, that is a **failure to diagnose, not a condition to route around.** Every death gets a human look, every time — the point is to find out *why* kickoff failed and fix the cause, not to paper over it with a retry that hides the pattern.
+
+Auto-retry is banned because it is the mechanism that produces duplicate work: a second session on the same task, a second PR, and a real branch abandoned in favor of a worse one. The pipeline is also the *worst-placed* actor to make this call — it is deciding to discard work based on the least reliable data it holds.
+
+**When a task is confirmed dead** (GitHub gate clean — no branch with commits — and no session record):
+
+1. **Change nothing.** Do not archive the FD task, do not archive the session, do not touch the source-system status, do not queue a replacement task. Leave the wreckage exactly as-is — it is the evidence for the diagnosis.
+2. **Raise one Qalatra inbox alert** (same channel as pipeline-health incidents): `my_priority: 1`, `inbox: true`, source `context`/`project` for the repo, `source_url` pointing at the source-system card. Title it so it reads as an incident, e.g. `Pipeline: dead kickoff — <task title>`. Include what was checked: FD status + age, whether a session record existed, the GitHub branch query and its result, and the last known error from the kickoff job output.
+3. **Log `KICKOFF_DEAD_ALERTED` and stop handling that task.**
+4. **On later passes, stay quiet.** If an open alert for this task already exists, log only — never re-alert, never escalate into action. The task waits for a human.
+
+Restarting is a **human decision**: Justin diagnoses the cause, fixes it (or works around it deliberately), and re-dispatches through the normal kickoff path.
+
+### Escalate rather than guess
+
+If the evidence is contradictory (FD says `DISPATCHED`, bridge says nothing, GitHub is ambiguous), do **nothing destructive**: log `NEEDS_ATTENTION`, raise the inbox alert, and let a human resolve it. A stranded task costs a few hours; a wrong rescue costs the work plus the cleanup — and a silent retry costs the diagnosis.
+
+---
+
 ## Run Loop
 
 ### Step 0 — Load Config and Health Check
@@ -267,7 +335,7 @@ unblocked itself rather than wondering why an open question went quiet.
 **Branch pushed, no PR → open the PR on-box; never nudge the session to open it.**
 If a branch is pushed and no PR exists — **including** when the session reports it is blocked opening its own PR (e.g. its cloud-side GitHub MCP is disconnected, the common case) — PR creation is the pipeline's job: `claude_session_create_pr({ session_id })`. Do **not** inject "open the PR" / "create the PR" to the session (canonical rule — see *Stage 3: Open PR*); the cloud env's git/PR tooling is unreliable and asking it to do the pipeline's job is how a finished session gets misread as stuck. Log `STAGE_3_PR_OPENED_ONBOX`.
 
-**Never kill + re-dispatch while a feature branch with commits exists on the remote** — that discards pushed work and risks two sessions double-pushing the same branch. Recovery = adopt the existing branch (attach + open PR), not restart. Kill + re-dispatch is only for a confirmed-dead session with **no** pushed branch.
+**Never kill + re-dispatch.** A feature branch with commits on the remote means the session produced work — adopt the existing branch (attach + open PR), never restart; killing it discards real work and risks two sessions double-pushing the same branch. And a session confirmed dead with **no** pushed branch is not a restart either: alert Justin and stop. The pipeline has no auto-restart path at all. See *Liveness & Destructive Actions* → *No auto-rescue* at the top of this file — it binds every path in every layer, not just this handler.
 
 **Branch diff check:**
 ```bash
