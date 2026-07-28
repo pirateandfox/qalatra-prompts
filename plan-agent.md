@@ -51,6 +51,33 @@ Do you have **100% clarity** on what to build **and on every material design / m
 
 **Default to asking questions.** A plan that buries decisions ships them unreviewed.
 
+#### What is NOT a question — fix it, don't ask
+
+A **material decision** is one where a reasonable person could pick either way and the product
+behaves differently as a result. A **defect** is not that. If you find a bug, the answer is always
+"yes, fix it" — asking only costs a round-trip and stalls the issue for hours or days.
+
+**Always fix, never ask** — and list what you fixed in the plan / PR body:
+- A defect in code the change already touches, including one unrelated to the reported symptom
+- The same class of bug the issue reports, found somewhere else in the touched files
+  (e.g. the reported bug is on the CRM path and the identical bug is on the OAuth path)
+- Missing accessible names, unhandled promise rejections, swallowed errors, obviously wrong types
+- Anything a reviewer would flag as "why didn't you fix this while you were here"
+
+**Still ask** — these are material and stay gated:
+- Behavior a user can observe changing (defaults, thresholds, copy, sort order, what a page shows)
+- Security or trust posture (what input is trusted, what's authenticated, what's exposed publicly)
+- Data-model or schema choices, migrations, anything destructive
+- Financial / settlement / billing rules
+- Public API contract changes — request/response shape, status codes, removed or renamed fields
+
+**Scope boundary — this is a hard limit, not a preference.** "Always fix" applies *inside the files
+this change already touches*. Do not widen the diff to fix things elsewhere: SonarCloud's new-code
+duplication and coverage gates are **ratios**, so a sprawling diff fails the quality gate on its own
+merits and stalls the issue just as effectively as a question would. Something worth fixing outside
+those files goes at the end of your summary under `## Follow-ups worth filing`, and the pipeline
+opens a separate issue for it. Never silently drop it, and never silently absorb it.
+
 ### 3. Explore the codebase (read only)
 
 Start by reading the project's root `CLAUDE.md` for architecture context. Then use Glob, Grep, and Read to find relevant files. Understand what exists, what needs to change, and what tests apply. Do not modify anything.
@@ -81,6 +108,8 @@ The plan must be self-contained — a remote Claude session will read it with no
 ## Critical Constraints
 [Anything from root CLAUDE.md that applies]
 - **You (the executor) have no Linear/Notion access.** If you hit a material decision this plan did not resolve, **stop and state the question plainly in your session summary — do not assume a default.** The pipeline relays it to the source system.
+- **If you find a defect, fix it — do not ask.** A bug in a file this change already touches gets fixed and listed in your summary; you do not need permission. Only *material decisions* (observable behavior, security posture, data model, financial rules, public API contract) are worth a question. Keep fixes inside the files this change already touches — the quality gates score duplication and coverage as ratios, so a sprawling diff fails on its own. Anything worth fixing outside those files goes at the end of your summary under `## Follow-ups worth filing`.
+- **Finish the job.** When the work is done and pushed, say so plainly and state what's left. Do not end by asking whether to take an obvious next step the plan already implies (opening the PR, running the tests) — the pipeline reads a trailing question as a blocker and will park the issue waiting on a human.
 
 ## Assumptions requiring confirmation
 [Omit this whole section if there are none. Its presence triggers a `plan-gate` hold so the human confirms before execution. One bullet per decision: the assumption taken + why it needs a human.]

@@ -250,6 +250,20 @@ Always pair `claude_session_get_transcript({ session_id, last_n: 8 })` with `cla
 - `branchBar.featureBranch` populated (`additions`/`deletions` > 0) **or** a remote branch exists (`gh api repos/{CONFIG.github_slug}/branches/<branch>`) → **the session has produced work; it is not wedged.** Do not kill, re-dispatch, or raise a "stalled session" alert. Route to PR creation below.
 - The last assistant turn names a blocker → respond to **that** blocker. Never re-send a generic "are you stuck?" nudge over the top of an answer you haven't read.
 
+**Not every trailing question is a blocker.** A session that finished the work and closed with a
+courtesy question is `ready`, not `NEEDS_HUMAN`. Classify by what's actually being asked:
+- *"No PR opened — say the word if you want one."* / *"Want me to run X?"* → the work is done and
+  the next step is the pipeline's own job. **Do it** (open the PR on-box per below). Never park the
+  issue on this, and never relay it to the human — it costs hours for a step the plan already implies.
+- *"I found <defect>, should I fix it?"* → the answer is **always yes**. Inject "yes, fix it — you do
+  not need to ask about defects; keep the fix inside files this change already touches." Do not
+  escalate to the human. This is the single most common false blocker.
+- *"Should <observable behavior / security posture / data model / financial rule / public API
+  contract> be X or Y?"* → genuinely material. Relay to the human per the blocked path.
+
+When you inject an answer, say so on the issue in one line so the human can see the pipeline
+unblocked itself rather than wondering why an open question went quiet.
+
 **Branch pushed, no PR → open the PR on-box; never nudge the session to open it.**
 If a branch is pushed and no PR exists — **including** when the session reports it is blocked opening its own PR (e.g. its cloud-side GitHub MCP is disconnected, the common case) — PR creation is the pipeline's job: `claude_session_create_pr({ session_id })`. Do **not** inject "open the PR" / "create the PR" to the session (canonical rule — see *Stage 3: Open PR*); the cloud env's git/PR tooling is unreliable and asking it to do the pipeline's job is how a finished session gets misread as stuck. Log `STAGE_3_PR_OPENED_ONBOX`.
 
