@@ -98,13 +98,24 @@ So: **absence of evidence in the bridge is never evidence of death.** Bridge sig
 
 A silently-failed kickoff means **FlightDesk holds the record and no session was ever created**. An empty `branchBar` on a session that *does* exist is a work-progress signal on the slow clock — it is *not* a dead kickoff, and must never be fed into the fast clock's 1-hour rule. That conflation is exactly how a live session gets archived as a "rescue."
 
-### ⛔ No auto-rescue. A dead task is reported, never restarted.
+### ⛔ No auto-rescue. Never create a second cloud session for work that already has one.
 
-**Justin's standing rule (2026-07-28): the pipeline never re-dispatches a dead execution task, and never creates a replacement task for one.** When a cloud execution session is confirmed dead, that is a **failure to diagnose, not a condition to route around.** Every death gets a human look, every time — the point is to find out *why* kickoff failed and fix the cause, not to paper over it with a retry that hides the pattern.
+**Justin's standing rule (2026-07-28).** The line is not "acting vs. waiting" — it is **conversation vs. creation**:
 
-Auto-retry is banned because it is the mechanism that produces duplicate work: a second session on the same task, a second PR, and a real branch abandoned in favor of a worse one. The pipeline is also the *worst-placed* actor to make this call — it is deciding to discard work based on the least reliable data it holds.
+| | |
+|---|---|
+| ✅ **Always fine — do this freely** | Talking to a session that already exists. Inject context, answer its question, relay review feedback, nudge a stuck session forward, push a stalled conversation along. Adding to a cloud conversation is the pipeline's *job*. Nudge as often as it helps. |
+| ⛔ **Never** | **Creating a new cloud session for work that already has one** — because the old session looked dead, couldn't be found, or didn't answer. Also: queueing a replacement task, or resetting a source status to a kickoff state so the orchestrator spawns one. |
 
-**When a task is confirmed dead** (GitHub gate clean — no branch with commits — and no session record):
+The banned move is specifically: *the pipeline went looking for a session it believed existed, didn't find it, and made a new one.* That is the mechanism that produces duplicate work — a second session on the same task, a second PR, and a real branch abandoned in favor of a worse one. And the pipeline is the worst-placed actor to make that call: it is deciding to discard work based on the least reliable data it holds (see *The bridge is not ground truth* above — "couldn't find the session" is very often "couldn't see the session").
+
+A dead task is a **failure to diagnose, not a condition to route around.** Every death gets a human look, every time — the point is to find out *why* the session died or never started and fix that cause, not to paper over it with a retry that hides the pattern.
+
+**When in doubt, nudge — don't spawn.** An unnecessary inject costs nothing; an unnecessary session costs the work.
+
+**When a session exists but looks stuck or silent:** inject. That is not a rescue and needs no gate.
+
+**When a task is confirmed dead** (GitHub gate clean — no branch with commits — and no session that can be injected into):
 
 1. **Change nothing.** Do not archive the FD task, do not archive the session, do not touch the source-system status, do not queue a replacement task. Leave the wreckage exactly as-is — it is the evidence for the diagnosis.
 2. **Raise one Qalatra inbox alert** (same channel as pipeline-health incidents): `my_priority: 1`, `inbox: true`, source `context`/`project` for the repo, `source_url` pointing at the source-system card. Title it so it reads as an incident, e.g. `Pipeline: dead kickoff — <task title>`. Include what was checked: FD status + age, whether a session record existed, the GitHub branch query and its result, and the last known error from the kickoff job output.
@@ -335,7 +346,7 @@ unblocked itself rather than wondering why an open question went quiet.
 **Branch pushed, no PR → open the PR on-box; never nudge the session to open it.**
 If a branch is pushed and no PR exists — **including** when the session reports it is blocked opening its own PR (e.g. its cloud-side GitHub MCP is disconnected, the common case) — PR creation is the pipeline's job: `claude_session_create_pr({ session_id })`. Do **not** inject "open the PR" / "create the PR" to the session (canonical rule — see *Stage 3: Open PR*); the cloud env's git/PR tooling is unreliable and asking it to do the pipeline's job is how a finished session gets misread as stuck. Log `STAGE_3_PR_OPENED_ONBOX`.
 
-**Never kill + re-dispatch.** A feature branch with commits on the remote means the session produced work — adopt the existing branch (attach + open PR), never restart; killing it discards real work and risks two sessions double-pushing the same branch. And a session confirmed dead with **no** pushed branch is not a restart either: alert Justin and stop. The pipeline has no auto-restart path at all. See *Liveness & Destructive Actions* → *No auto-rescue* at the top of this file — it binds every path in every layer, not just this handler.
+**Never kill + spawn a replacement session.** A feature branch with commits on the remote means the session produced work — adopt the existing branch (attach + open PR); killing it discards real work and risks two sessions double-pushing the same branch. A session confirmed dead with **no** pushed branch doesn't get a replacement either: alert Justin and stop. *(Injecting into the existing session is always allowed and encouraged — the ban is on creating a second one.)* See *Liveness & Destructive Actions* → *No auto-rescue* at the top of this file — it binds every path in every layer, not just this handler.
 
 **Branch diff check:**
 ```bash
