@@ -202,7 +202,7 @@ Post-session diff assessment:
 4. If build fails with TS errors → inject error to session, wait for `ready`, pull, re-run
 5. `git add -A && git commit -m "chore: regenerate codegen artifacts" && git push`
 6. If files changed: inject "please run git pull" → verify session moves to `running`
-7. `claude_session_create_pr(session_id)`
+7. Open PR — canonical procedure: `claude_session_create_pr(session_id)` → resolve the PR on GitHub → `flightdesk task update <taskId> --branch ... --pr-url ... --pr-number ...` (+ `--status PR_OPEN` if FD hasn't advanced)
 8. `git checkout <base_branch>`
 
 **Migration path steps:**
@@ -219,7 +219,7 @@ Post-session diff assessment:
 10. Stop Docker: `docker compose -f {repo}/.dev/docker-compose.yml down`
 11. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
 12. Inject "please run git pull" → verify `running`
-13. `claude_session_create_pr(session_id)`
+13. Open PR — canonical procedure: `claude_session_create_pr(session_id)` → resolve the PR on GitHub → `flightdesk task update <taskId> --branch ... --pr-url ... --pr-number ...` (+ `--status PR_OPEN` if FD hasn't advanced)
 14. `git checkout <base_branch>`
 
 Newer nestled repos also carry a structural guard in `prisma.config.ts` that hard-fails `migrate dev`/`migrate reset` against any non-localhost host. A `BLOCKED: prisma migrate ...` error means the guard fired — fix the URL prefix, never bypass it.
@@ -325,6 +325,7 @@ Key facts:
 - `PREVIEW_READY` is transient — FD can get stuck here if SonarCloud passes on first run (no webhook fires). Check GitHub directly and advance manually if all green.
 - `QA_READY` = all checks passed. Use this as the Stage 4 completion signal.
 - `REVIEW_DONE` = a check submitted `NEEDS_HUMAN_REVIEW`. Cannot auto-resolve — surface for human.
-- Never call `update_task_status` for `PR_OPEN` or `MERGED` — FlightDesk detects these via GitHub webhooks.
+- `MERGED` comes from FlightDesk's GitHub webhook — never set it by hand.
+- `PR_OPEN` is **reported by the pipeline**, not awaited: any time the pipeline opens a PR it runs the canonical Open PR procedure (`flightdesk task update ... --branch --pr-url --pr-number`, then `--status PR_OPEN` only if FD is still at `DISPATCHED`/`IN_PROGRESS`). The webhook is redundant confirmation; it misses PRs often enough to strand tasks. Never write a status that moves FD backwards.
 - Copilot `status: FAILED` in checks ≠ blocking. Verify with `gh pr view --json reviews` — only block if `state: CHANGES_REQUESTED`.
 - SonarQube `PENDING` in FD is a known display bug. Check the SonarCloud proxy for real state.

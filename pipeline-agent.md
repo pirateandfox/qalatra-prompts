@@ -139,7 +139,7 @@ Tasks where plan is written and approved, waiting for execution dispatch. No aut
 
 **Status:** ACTIVE.
 
-**Core principle:** Connect the branch to FlightDesk *before* a PR opens. Once connected, FlightDesk auto-detects PR_OPEN and MERGED via GitHub webhooks.
+**Core principle:** Connect the branch to FlightDesk *before* a PR opens, and **report the PR to FlightDesk the moment the pipeline opens one** (canonical *Stage 3: Open PR*). FlightDesk's GitHub webhook is a redundant confirmation path, not the mechanism the pipeline relies on — a missed webhook must never be able to strand a task. `MERGED` still comes from the webhook.
 
 **For each task:**
 1. Parse FlightDesk task ID from `task.links`
@@ -213,7 +213,9 @@ Read transcript: `claude_session_get_transcript({ session_id, last_n: 8 })`
 - Session reports completion without a branch → Session Assessment handler
 
 **Notes:**
-- Never call `update_task_status` for `PR_OPEN` or `MERGED` during normal flow — FD auto-detects via webhook. The exception is manual branch attachment recovery when FD missed the branch/PR; use `flightdesk task update ... --status PR_OPEN --branch ... --pr-url ... --pr-number ...`.
+- **PR_OPEN is reported, not awaited.** Whenever the pipeline opens a PR it tells FlightDesk directly — see the canonical *Stage 3: Open PR* procedure (`flightdesk task update <taskId> --branch ... --pr-url ... --pr-number ...`, then `--status PR_OPEN` only if FD is still at `DISPATCHED`/`IN_PROGRESS`). The webhook is redundant confirmation, not the source of truth. The same command is the branch-attachment recovery path when FD missed a PR the pipeline didn't open.
+- `MERGED` still comes from FD's webhook — do not set it by hand during normal flow.
+- Never write a FlightDesk status that moves the task backwards from where FD already is.
 - If `get_task_notes` has no session ID → `STAGE_3_NO_SESSION`, do not guess
 - If FD task ID missing from `task.links` → check source before flagging (pulled-back detection)
 
@@ -287,7 +289,7 @@ For repos where `{CONFIG.framework}` = `nestled` and the diff shows generated fi
    - **CRITICAL:** `injected: true` can be a false positive. Always verify state changes to `running`. If not, retry inject. Do NOT skip inject and call `create_pr` directly.
    - **Do NOT** mention "create the PR" in the inject message — PR is always created via `claude_session_create_pr`
    - If db-update produced no changes → skip inject
-8. `claude_session_create_pr(session_id)`
+8. Open the PR via the canonical **Stage 3: Open PR** procedure (`create_pr` → resolve the PR on GitHub → report branch/PR to FlightDesk with `flightdesk task update`). Never stop at `create_pr`.
 9. `git checkout {CONFIG.base_branch}`
 
 **NX daemon troubleshooting:** If `nx build` hangs: `pkill -f "nx serve api"; pkill -f "nx daemon"; npx nx reset`
@@ -322,7 +324,7 @@ Docker credentials (all nestled projects): user=`prisma`, password=`prisma`, db=
 13. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
 14. Inject: *"I ran prisma migrate dev and regenerated artifacts locally and pushed to the branch. Please run git pull to sync your working copy."* → verify `running`
     - Same CRITICAL notes as codegen: verify state change, no PR mention, retry if needed
-15. `claude_session_create_pr(session_id)`
+15. Open the PR via the canonical **Stage 3: Open PR** procedure (`create_pr` → resolve the PR on GitHub → report branch/PR to FlightDesk with `flightdesk task update`). Never stop at `create_pr`.
 16. `git checkout {CONFIG.base_branch}`
 
 **CRITICAL:** Never edit `.env` — the explicit `DATABASE_URL=` prefix replaces the old swap/restore approach. Always stop Docker. Never leave a local Postgres running.
@@ -331,13 +333,35 @@ Docker credentials (all nestled projects): user=`prisma`, password=`prisma`, db=
 
 ---
 
-### Stage 3: Open PR
+### Stage 3: Open PR — canonical PR-open procedure
 
-When session is done and no reconciliation is needed:
-```
-claude_session_create_pr(session_id)
-```
-Do NOT inject to ask the session to create a PR — it bypasses FlightDesk tracking. Do NOT call `update_task_status(PR_OPEN)` — FD auto-detects.
+**Every** PR the pipeline opens runs this procedure: the direct path (session done, no reconciliation needed), the tail of Codegen Reconciliation (step 8), and the tail of the Migration Path (step 15). Opening a PR is not done until FlightDesk has been told about it.
+
+1. **Open it.**
+   ```
+   claude_session_create_pr(session_id)
+   ```
+   Do NOT inject to ask the session to create a PR — it bypasses FlightDesk tracking.
+
+2. **Resolve the PR from GitHub.** The bridge click is asynchronous — never assume it landed:
+   ```bash
+   gh pr list --repo {CONFIG.github_slug} --head <branchName> --json number,url --limit 1
+   ```
+   Poll ~15s apart for up to ~2 min. Still empty → log `STAGE_3_PR_NOT_FOUND` and flag `NEEDS_ATTENTION`. Do not re-click `create_pr` blindly, and do not inject "open the PR" to the session.
+
+3. **Report it to FlightDesk immediately — do not wait for the webhook.** This is the step that keeps FD status honest; the GitHub→FD webhook is best-effort and silently misses PRs (fuzzy title matching, missed deliveries), which strands the task at `DISPATCHED`/`IN_PROGRESS` forever.
+   ```bash
+   flightdesk task update <taskId> --branch <branchName> --pr-url <prUrl> --pr-number <prNumber>
+   ```
+   Metadata-only, always safe, idempotent — send it whether or not the webhook already fired.
+
+4. **Advance status only if FD hasn't already.** Re-read status (`get_task({ taskId })`, or `flightdesk task status <taskId>`):
+   - Still `DISPATCHED` or `IN_PROGRESS` → `flightdesk task update <taskId> --status PR_OPEN`. Log `STAGE_3_PR_OPENED`.
+   - Already `PR_OPEN` / `PREVIEW_*` / `REVIEW_*` / `QA_*` / `MERGED` → the webhook beat you; step 3 was enough. Log `STAGE_3_PR_REPORTED`. **Never write a status that moves FD backwards.**
+
+5. Optional, when review state matters right away: `flightdesk task sync <taskId>` pulls Copilot/Claude/human review state from GitHub onto the task.
+
+**Rule:** the pipeline reports PR-open to FlightDesk as a write-through, and treats the webhook as a redundant confirmation — not the source of truth.
 
 ---
 
