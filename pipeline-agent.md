@@ -343,6 +343,28 @@ courtesy question is `ready`, not `NEEDS_HUMAN`. Classify by what's actually bei
 When you inject an answer, say so on the issue in one line so the human can see the pipeline
 unblocked itself rather than wondering why an open question went quiet.
 
+**A prior run's claim that human feedback was delivered is not evidence that it was.** When the
+source-system history shows the pipeline telling a human "your feedback is in the build session,"
+treat that as an *assertion to verify*, never as a completed step — including when it is your own
+earlier comment. Verify both ends before you accept it:
+1. **The transcript** — is there actually a user turn carrying that feedback?
+   (`claude_session_get_transcript({ session_id, last_n: 8 })`.) A short transcript with no injected
+   turn means the inject never landed, whatever the comment says.
+2. **The produced code** — does the branch reflect the instruction? Grep the diff for the thing the
+   human asked for or asked to be removed.
+
+If either check fails, re-inject and **say so plainly on the issue**, correcting the earlier claim —
+the human is making downstream decisions (here: what to submit to a third-party reviewer) on the
+belief their instruction was applied. Silently re-injecting leaves them trusting a record that was
+wrong.
+
+This is the failure mode: an inject reported `injected: true`, the run posted "feedback applied,"
+the inject never reached the session, and the branch shipped precisely the values the human had
+vetoed — with the session's own summary listing them as still-open questions. Observed 2026-07-29,
+travel-outlook PIR-241 (invented data-retention periods in a public privacy policy bound for
+Intuit's app review). The `injected: true` → state-change check below guards the *current* inject;
+this guards inherited state from an earlier run.
+
 **Branch pushed, no PR → open the PR on-box; never nudge the session to open it.**
 If a branch is pushed and no PR exists — **including** when the session reports it is blocked opening its own PR (e.g. its cloud-side GitHub MCP is disconnected, the common case) — PR creation is the pipeline's job: `claude_session_create_pr({ session_id })`. Do **not** inject "open the PR" / "create the PR" to the session (canonical rule — see *Stage 3: Open PR*); the cloud env's git/PR tooling is unreliable and asking it to do the pipeline's job is how a finished session gets misread as stuck. Log `STAGE_3_PR_OPENED_ONBOX`.
 
