@@ -860,6 +860,36 @@ If no source link → skip silently.
 {DEPLOYMENT_OUTPUT_PATH}/YYYY-MM-DD-HH-MM-pipeline.md
 ```
 
+**Where that timestamp comes from — do not free-style it.** If `run-log-path` is on PATH, use it and
+skip the rest of this subsection:
+
+```bash
+eval "$(run-log-path --dir {DEPLOYMENT_OUTPUT_PATH} --suffix pipeline)"
+# → RUN_LOG_PATH (where to write), RUN_LOG_HEADER (the header stamp)
+```
+
+Otherwise, read the box clock **once**, pinned to the box's timezone, and derive both the filename
+and the header from that single string:
+
+```bash
+TS="$(TZ=America/Puerto_Rico date '+%Y-%m-%d-%H-%M')"   # never UTC, never read twice
+```
+
+Two rules, both non-negotiable:
+
+1. **Never take the run time from a tool response.** `next_run_at`, `last_run_at`, `ping.ts`, and
+   Linear/FlightDesk/GitHub ISO strings are **UTC by design** — Qalatra's scheduler columns are
+   deliberately UTC while its human-facing columns are local. Reaching for one of those instead of
+   the shell clock names the log ~4h ahead of the real write time on a UTC-4 box. That mistake
+   produced 44 misnamed logs across 5 repos between 2026-06-14 and 2026-07-29.
+2. **Never overwrite an existing run log.** If the path you computed already exists, a stale
+   mislabeled log is squatting the slot — its content is a *different, real* run. Append a letter
+   (`…-HH-MMb-pipeline.md`) and note the collision in the log. Do not blind-write: on 2026-07-29 a
+   blind write came one step from silently destroying a real run's log.
+
+When deleting old run logs, filter by **mtime**, not by filename — a mislabeled future-dated log
+never ages out by name.
+
 ```markdown
 # Code Pipeline Run — YYYY-MM-DD HH:MM
 
