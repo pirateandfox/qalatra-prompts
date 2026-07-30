@@ -458,11 +458,37 @@ Docker credentials (all nestled projects): user=`prisma`, password=`prisma`, db=
    ```
    Do NOT inject to ask the session to create a PR — it bypasses FlightDesk tracking.
 
-2. **Resolve the PR from GitHub.** The bridge click is asynchronous — never assume it landed:
+   ⚠️ **`create_pr` clicks a shared browser tab and can land on the WRONG SESSION.** It drives the
+   claude.ai UI, and unlike `claude_session_inject` it has **no parked-tab guard** — so it can return
+   `{ok: true}` having opened a PR for a *different* session's branch. Observed 2026-07-30
+   (travel-outlook, 7 concurrent sessions): a `create_pr` on PIR-252's session returned `ok` and opened
+   PIR-239's PR instead; the next call failed outright with `Create PR button not found`. With one
+   session in flight this is invisible; with several it silently misattributes work.
+
+   **So step 2 is not optional and it is not just a liveness poll — it is an identity check.** Never
+   report a PR to FlightDesk or a source system until you have confirmed on GitHub that the PR's
+   `headRefName` is the branch you intended.
+
+   **When the bridge is unreliable, `gh pr create` is the correct fallback** — not a rule violation.
+   The canonical ban is on *injecting the session to open its own PR* (unreliable cloud git tooling,
+   and it reads as a stuck session). The reason `create_pr` is preferred over `gh` is FlightDesk
+   tracking — and step 3 below already makes the pipeline write that through itself, treating the
+   webhook as redundant. So `gh pr create --repo … --base … --head <branchName>` followed by step 3
+   reaches the same tracked end state with the branch named explicitly and no chance of
+   cross-session misattribution. Prefer it outright once `create_pr` has misfired in a run, and
+   whenever several sessions are in flight at once.
+
+2. **Resolve the PR from GitHub — and verify it is YOUR branch's PR.** The bridge click is
+   asynchronous and can be misdirected — never assume it landed, and never assume it landed on the
+   right session:
    ```bash
-   gh pr list --repo {CONFIG.github_slug} --head <branchName> --json number,url --limit 1
+   gh pr list --repo {CONFIG.github_slug} --head <branchName> --json number,url,headRefName --limit 1
    ```
-   Poll ~15s apart for up to ~2 min. Still empty → log `STAGE_3_PR_NOT_FOUND` and flag `NEEDS_ATTENTION`. Do not re-click `create_pr` blindly, and do not inject "open the PR" to the session.
+   Poll ~15s apart for up to ~2 min. Still empty → log `STAGE_3_PR_NOT_FOUND` and flag
+   `NEEDS_ATTENTION`. Do not re-click `create_pr` blindly, and do not inject "open the PR" to the
+   session. If a PR appeared for a branch you did **not** target, that is the mis-targeting above:
+   leave it (it is a legitimate PR for whichever branch it names — report it to *that* task's
+   FlightDesk record) and open yours with `gh pr create`.
 
 3. **Report it to FlightDesk immediately — do not wait for the webhook.** This is the step that keeps FD status honest; the GitHub→FD webhook is best-effort and silently misses PRs (fuzzy title matching, missed deliveries), which strands the task at `DISPATCHED`/`IN_PROGRESS` forever.
    ```bash
