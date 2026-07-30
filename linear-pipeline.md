@@ -111,10 +111,26 @@ manual override that pulls an issue out of the pipeline.
       project { id name }
       labels { nodes { name } }
       attachments { nodes { title url } }
-      comments(last: 5) { nodes { body createdAt user { id name } } }
+      comments(first: 5, orderBy: createdAt) { nodes { body createdAt user { id name } } }
     }
 } }
 ```
+
+⚠️ **`comments` returns NEWEST FIRST — use `first:`, never `last:`.** Linear's comment
+connection is ordered **descending** by `createdAt`. So `first: 5` = the 5 **newest**, and
+`last: 5` = the 5 **oldest** (the tail of a descending list). The old query used `last: 5`,
+which silently dropped every recent comment on any issue with more than 5 total — turning a
+freshly re-planned issue into an apparently stale one. Verified against the live API
+2026-07-30 (PIR-215, 9 comments: `last: 5` returned 07-23→07-30T03:14 and hid the four newest,
+including the decisive one).
+
+Consequences, all of which follow from descending order:
+- **Most recent comment = `nodes[0]`, never `nodes[-1]`.** `nodes[-1]` is the *oldest* of
+  the page. Client-side sorting is unnecessary — the order is deterministic, not arbitrary.
+- The explicit `orderBy: createdAt` is belt-and-braces: it pins the sort key so an *edited*
+  old comment can never jump the queue, and documents the direction at the call site.
+- If an issue's thread might exceed 5 comments *and* you need the full history (not just the
+  latest turn), raise the page size — `first: 50` — rather than paginating backwards.
 
 **Set status:** `mutation { issueUpdate(id: "<issue id>", input: { stateId: "<state id>" }) { success } }`
 
@@ -127,10 +143,16 @@ mutation { attachmentCreate(input: { issueId: "<issue id>", title: "FlightDesk",
 Use titles `FlightDesk`, `Preview`, `Pull Request`. Read them back from `attachments.nodes` during
 discovery — the FlightDesk attachment is the equivalent of Notion's `Agent URL`.
 
-**Turn-taking check (Planning / Blocked / Changes Requested):** read `comments` — if the most
-recent comment's `user.id` is Shi's, the pipeline asked and is waiting on a human; if a human
-commented last (or no comments), it's the pipeline's turn to re-engage. This same most-recent-author
-rule governs all three conversational states.
+**Turn-taking check (Planning / Blocked / Changes Requested):** read `comments` — the most recent
+comment is **`nodes[0]`** (the connection is newest-first; see the warning above). If its `user.id`
+is Shi's, the pipeline asked and is waiting on a human; if a human commented last (or no comments),
+it's the pipeline's turn to re-engage. This same most-recent-author rule governs all three
+conversational states.
+
+This read is correctness-critical — it decides whose turn it is — so it is the one place where a
+truncated or mis-ordered comment fetch causes a real misroute. If a discovery dump ever looks
+inconsistent with an issue's actual state, re-fetch that issue alone with
+`comments(first: 50, orderBy: createdAt)` and trust `nodes[0]`.
 
 ## Routing
 
