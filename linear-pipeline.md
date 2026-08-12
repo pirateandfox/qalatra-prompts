@@ -40,6 +40,36 @@ volume, revenue-bearing, production-critical) — flip **its own** `auto_merge` 
 `pipeline-config.md`, one at a time. Don't gate repos pre-emptively; the verifier + ship log are the
 safety net.
 
+### Closeout sequence (both merge paths)
+
+Whether the merge came from `In Progress` (auto-merge) or `Approved` (human-gated), close out in
+**this order**:
+
+1. Merge the PR to the base branch — this IS the deploy (Railway/CI watches the base branch).
+2. Delete the branch.
+3. Write the ship-log entry (`auto-merged` or `human-approved`).
+4. Archive the cloud session and the FlightDesk task (a webhook usually does this — **verify**, don't assume).
+5. **Post the closing comment on the issue.** ← required, see below
+6. Set `Done` — **last**, and only after 1–5 all succeed.
+
+**Step 5 is a required closeout step, not a nicety, and it must come BEFORE `Done`.** Observed twice
+(cashcast PIR-265 on 2026-08-11, flightdesk PIR-259 on 2026-08-12): the handler merged, archived, and
+set `Done` while posting no closing comment. Both issues went terminal with their last word still
+being the pipeline's own *"moving this to Blocked — I need a decision from you"* question, so from
+Linear alone they read as unresolved and abandoned. On PIR-259 this happened even though the dispatch
+prompt named the step explicitly — so **ordering it before `Done` is the fix; asking for it is not.**
+`Done` reads as the end of the run, and anything after it gets dropped. Treat step 5 as able to fail
+silently and verify it landed.
+
+Write the closing comment for a human skimming the issue months later, not for the pipeline:
+
+- what shipped, in plain language — the user-visible effect, not the diff
+- that merging to the base branch is what deployed it
+- anything deliberately left out, naming the issue that now carries it
+- no internal paths, Qalatra task IDs, verifier jargon, or session IDs
+
+This is the same Justin-facing standard as the `Blocked` entry comment.
+
 ---
 
 ## Identity & Access
@@ -88,11 +118,11 @@ manual override that pulls an issue out of the pipeline.
 | Backlog | human | Skip — not a pipeline status |
 | **Todo** (+ Shi assigned) | pipeline | **Intake** — dedup, create Qalatra plan task, queue planner → `Planning` |
 | **Planning** | turn by last comment | Planner drafts; posts the plan as an issue comment. Needs input → ask in a comment and wait (Shi-authored last comment = waiting on human; human-authored last = re-engage planner). Plan complete → **no approval gate**: orchestrator fires `flightdesk register` immediately → `In Progress`. Exception: if the issue has the **`plan-gate` label**, the orchestrator does NOT auto-execute — Justin reviews the plan comment and removes the label to approve (or comments to steer). |
-| **In Progress** | pipeline | Per-repo pipeline monitors: FD status, session discovery + branch recovery, PR creation, preview + PR attached to the issue, quality gates (Sonar where wired + Intelligence Check), thread reconciliation, then the **adversarial verifier**. On verifier `MERGE`: **auto-merge repos (default)** → merge to base branch (= deploy) + closeout → `Done` directly (ship-log `auto-merged`), skipping `In Review`/`Approved`; **human-gated repos** → `In Review`. Verifier `NEEDS_WORK` → inject fixes, stay `In Progress`. If a blocker needs a human decision the pipeline **can't** resolve on its own (red gate on a pre-existing/unrelated issue, missing credential/input, out-of-scope dependency), do **not** park here silently → move to `Blocked` (comment + alert). |
+| **In Progress** | pipeline | Per-repo pipeline monitors: FD status, session discovery + branch recovery, PR creation, preview + PR attached to the issue, quality gates (Sonar where wired + Intelligence Check), thread reconciliation, then the **adversarial verifier**. On verifier `MERGE`: **auto-merge repos (default)** → run the full **Closeout sequence** above (merge → delete branch → ship-log `auto-merged` → archive session + FD task → **post the closing comment** → `Done` last), skipping `In Review`/`Approved`; **human-gated repos** → `In Review`. Verifier `NEEDS_WORK` → inject fixes, stay `In Progress`. If a blocker needs a human decision the pipeline **can't** resolve on its own (red gate on a pre-existing/unrelated issue, missing credential/input, out-of-scope dependency), do **not** park here silently → move to `Blocked` (comment + alert). |
 | **Blocked** | turn by last comment | Pipeline parked here because it needs a human decision/input. **On entry it must:** (1) post one comment stating the blocker and the specific question/decision, (2) fire a proactive inbox alert (same plumbing as `ROUTE_UNKNOWN`). Then turn-taking by last comment, same as Planning: Shi-authored last comment = waiting on human; human commented last = re-engage — read the decision, act on it (inject into the live session / resume work / open a follow-up), then move to the right next state (`In Progress` if work resumes, `In Review` if it's now ready, `Changes Requested` if the human asked for changes). **Never auto-merge from `Blocked`.** |
 | **In Review** | human (Justin) | Only reached by **human-gated repos**, or when a human manually moves an issue here to intervene — auto-merge repos never stop here (a verifier `MERGE` merges straight from `In Progress`). **Excluded from the discovery query on purpose** (it's the human's column), so the pipeline does not act on it — Justin tests the preview/PR and sets `Approved`, or `Changes Requested` with a comment. An auto-merge issue must never be written here by the pipeline. |
 | **Changes Requested** | pipeline | **Pre-merge loop** — read the latest human comment(s), inject into the live session, comment back when pushed, flip to `In Review`. Repeats. Inject freely; that's the loop working. If the session is genuinely gone (not merely quiet — apply the liveness ladder), **do not spawn a replacement session**: alert Justin and leave it. See canonical *No auto-rescue*. |
-| **Approved** | pipeline | **Merge + close out** (human-gated path; auto-merge repos merge straight from `In Progress` and never pass through here) — merge the PR to the base branch (this IS the deploy: Railway/CI watches the base branch), delete the branch, write the ship-log entry (`human-approved`), archive session + FD task, then set `Done` **last**. |
+| **Approved** | pipeline | **Merge + close out** (human-gated path; auto-merge repos merge straight from `In Progress` and never pass through here) — run the full **Closeout sequence** above: merge to the base branch (this IS the deploy), delete the branch, ship-log `human-approved`, archive session + FD task, **post the closing comment**, then set `Done` **last**. |
 | Done | terminal | Skip. **Reopen path:** a human moves a Done issue back to `Todo` with Shi assigned → intake detects prior FD/PR history and re-plans in **revision mode** on a fresh branch off the current base branch. |
 | Canceled / Duplicate | terminal | Skip. If an in-flight issue is canceled, the pipeline archives any live session/FD task on its next pass. |
 
