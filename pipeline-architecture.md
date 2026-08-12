@@ -57,7 +57,9 @@ incidents, and makes a genuinely inert monitor indistinguishable from a correctl
   status / last-activity field. Dispatch the monitor agent only when that read shows movement: a merge
   landing, a newly blocking merge state, the task leaving its parked status, or a new comment. Log
   `PIPELINE_MONITOR_HELD` carrying the compared values, and refresh the monitor task description so the
-  comparison is stateless across passes and `last_touched_ai` stays fresh.
+  comparison is stateless across passes and `last_touched_ai` stays fresh. The description holds the
+  **movement watermarks only** — PR head, source status, newest-comment timestamp. It is never the
+  hold-age store; hold age comes from `job_started_at` (see *Break the hold on age* below).
 
 - **Declare the eligible set — never infer it.** Each repo's config declares `human_gate_states`
   (Trello deployments: `human_gate_lists`): the exact status values whose only remaining move is a
@@ -78,6 +80,16 @@ incidents, and makes a genuinely inert monitor indistinguishable from a correctl
   parked in a state that only *looks* like a human gate — a plan task stuck `active` after its job
   completed, a manual merge that bypassed closeout — and in those cases the monitor is the thing that
   would have noticed. Without this escape, back-off converts a self-healing stall into a permanent one.
+
+  **Compute hold age from `job_started_at` on the monitor task's most recent job
+  (`get_tasks_by_agent`), never by parsing timestamps out of prior freeform description/`ai_context`
+  log lines.** `job_started_at` is the authoritative, monotonically-updated last-dispatch time; always
+  read it fresh. Freeform text duplicates across passes, goes stale, and disagrees with itself —
+  observed 2026-08-11 on cashcast, where gate checks recomputed age against a superseded anchor and
+  fired three redundant `PIPELINE_MONITOR_HELD_EXPIRED` dispatches inside one 4-hour window. Anchoring
+  age to the last real dispatch is also what makes the escape fire **once**: a hold that has expired
+  into a dispatch must not expire again within `monitor_hold_max_hours`, and it can't, because that
+  dispatch reset `job_started_at`.
 
 - **Create the daily monitor task fresh; never carry one over.** Detect a carry-over by `created_at`,
   not by title. The daily roll is the only thing that reliably retires an anchored session.
