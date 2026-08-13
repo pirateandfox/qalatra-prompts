@@ -898,6 +898,38 @@ Parse `task.links` for non-FlightDesk URLs. Identify system by URL pattern. Exec
 
 If no source link → skip silently.
 
+### The closing note is required, and it comes BEFORE the terminal state
+
+This applies to **every** source system — Linear, Notion, Trello, Qalatra, anything added later. The
+mechanics differ (a Linear comment, a Notion comment, a Trello card comment); the rule does not.
+
+**Order:** merge → delete branch → ship-log → archive session + FlightDesk task → **post the closing
+note** → *then* set the terminal state (`Done`, card moved to Done, etc.) **last**.
+
+Do not set the terminal state first and comment after. The terminal state reads as the end of the
+run, and anything sequenced after it gets dropped.
+
+**Observed twice, on Linear:** cashcast PIR-265 (2026-08-11) and flightdesk PIR-259 (2026-08-12). In
+both, the handler merged, archived, and set `Done` while posting no closing note — so each ticket
+went terminal with its last word still being the pipeline's own *"I need a decision from you"*
+question, and read as abandoned. On PIR-259 it was skipped **even though the dispatch prompt named
+the step explicitly**, which rules out prompting as the fix. Ordering it before the terminal state is
+the fix. Treat it as a step that can fail silently, and verify it landed.
+
+**What the note says** — write it for a human skimming the ticket months later, not for the pipeline:
+
+- what shipped, in plain language — the effect someone would notice, not the diff
+- that merging to the base branch is what deployed it
+- anything deliberately left for later, naming the ticket that now carries it
+
+Keep internal provenance out of it: no local filesystem paths, no Qalatra task or session IDs, no
+verifier jargon. On a client-visible board, also keep out pricing, estimates, and anything about
+other clients — see the repo's own `pipeline-config.md` for deployment-specific wording rules.
+
+Source-system-specific mechanics (exact API call, identity to post as, state IDs) belong in that
+system's flavor doc — e.g. `linear-pipeline.md` → *Closeout sequence* — or in the repo's
+`pipeline-config.md`. The requirement and the ordering live here because they are universal.
+
 ---
 
 ## Logging
