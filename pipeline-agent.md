@@ -68,6 +68,28 @@ Two rules govern them, in order: (1) bridge state can never establish death, and
 
 So: **absence of evidence in the bridge is never evidence of death.** Bridge signals may confirm liveness; they may never, alone, establish death.
 
+**Reads and writes can fail independently — a healthy read is not proof the relay works** (learned
+2026-08-25, cashcast PIR-286/PIR-287). `claude_session_get_state` is now API-backed, so it happily
+returns `state: "ready"`, `workerStatus: "idle"` for a session that `claude_session_inject`
+**cannot reach at all** — the inject goes through the browser tab and fails with a flat
+`Session not found`, the same string it returns for a session that genuinely does not exist. Both
+sessions above read as healthy for ~16 hours while every inject bounced.
+
+Consequences:
+- **`Session not found` from `inject` does not mean the session is gone.** Confirm against the API
+  read and GitHub before drawing any conclusion, and never treat it as grounds for a destructive
+  action or a rescue — the *No auto-rescue* rule applies with full force.
+- **`claude_sessions_warm` returning `0` while `claude_sessions_list` returns N sessions is the
+  tell.** Warm clicks through each session in the tab; `0 warmed` with a non-empty list means the
+  tab side is down, so no inject will land this pass. Check it once before a batch of injects
+  rather than discovering it one failed inject at a time.
+- **A relay that stays down is a `Blocked`-class human-input blocker, not a transient gate
+  failure.** The pipeline cannot fix it from inside. Once findings have failed to deliver across
+  more than one pass, stop re-posting them to the source task and escalate: `Blocked` + one comment
+  naming the blocker and the decision, + the inbox alert. Repeating "delivery will be retried next
+  pass" in a comment is not an escalation and does not create the alert — on the issues above it was
+  promised twice and no alert task ever existed.
+
 ### Evidence ladder — check in this order
 
 1. **GitHub (ground truth).** Does a branch exist for this task, and does it have commits?
