@@ -90,6 +90,46 @@ Consequences:
   pass" in a comment is not an escalation and does not create the alert — on the issues above it was
   promised twice and no alert task ever existed.
 
+**Before escalating a dead relay, diagnose it — it is usually a stuck tab, and you can fix it
+yourself in two minutes** (learned 2026-08-25, same incident: it was escalated as needing a human
+and was not). Every DOM-dependent bridge op (`warm`, `inject`, `branchBar`) finds sessions with a
+single selector — `[data-row-key="code:<sessionId>"]` — so **anything that stops `claude.ai/code`
+from rendering breaks all of them at once while the API reads sail on.** Diagnose in this order:
+
+```bash
+curl -s http://127.0.0.1:7878/health        # {"ok":true,"chrome":true,...} = daemon+Chrome fine
+tail -50 /tmp/claude-bridge.log             # ← the answer is here
+```
+
+The log stamps **the tab's actual URL** on every dispatched command:
+
+```
+[ext] warm_sessions → tab 511877960 https://claude.ai/api/challenge_redirect?to=…%2Fcode
+```
+
+Any URL that is not `https://claude.ai/code` is the whole bug. The observed case was a Cloudflare
+bot-challenge interstitial (window title `Just a moment...`) that the tab landed on and never left —
+17 hours of "the sessions are unreachable" from one stuck page. Recovery, when the box runs a
+headed Chrome on an X display:
+
+```bash
+tr '\0' '\n' < /proc/<chrome-pid>/environ | grep ^DISPLAY   # e.g. :99
+export DISPLAY=:99
+xdotool search --name "Chrom"                               # find the window; check getwindowname
+xdotool windowactivate --sync <win>; xdotool key --window <win> ctrl+l
+xdotool type --window <win> "https://claude.ai/code"; xdotool key --window <win> Return
+```
+
+Then **prove recovery with `claude_sessions_warm` returning non-zero**, never with a read. Escalate
+to a human only if the page cannot be cleared (a challenge that demands interaction, or a genuine
+logout).
+
+⚠️ **`inject` can report failure after the prompt actually landed.** Both injects on recovery
+returned `Send button not found` while the transcript showed the user turn correctly posted seconds
+later. Any inject error — including this one and a `verified: false` — means *delivery unproven*,
+not *delivery failed*: **read `claude_session_get_transcript` before retrying, or you will
+double-post the same instructions.**
+
 ### Evidence ladder — check in this order
 
 1. **GitHub (ground truth).** Does a branch exist for this task, and does it have commits?
