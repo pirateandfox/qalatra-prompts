@@ -471,6 +471,22 @@ For repos where `{CONFIG.framework}` = `nestled` and the diff shows generated fi
 
 **NX daemon troubleshooting:** If `nx build` hangs: `pkill -f "nx serve api"; pkill -f "nx daemon"; npx nx reset`
 
+**Cap nx parallelism — the boxes are small and shared.** Agent boxes are 4–6 vCPU, and every
+`claude -p` agent shares one cgroup with the Qalatra server, so an uncapped test run starves the
+box's own MCP endpoint rather than just itself. `nx run-many` defaults to **3** parallel projects
+and jest defaults to **`cpus-1`** workers, and those two **multiply** — up to 15 workers, ~600 MB
+each, on a 6-CPU box. Always cap the outer number on `run-many` / `affected` for `test` and `build`:
+
+```bash
+NODE_ENV=test pnpm nx run-many -t test --parallel=1
+```
+
+*Precedent (2026-08-31, shi): an uncapped `nx run-many -t test` on travel-outlook ran 2 nx processes
+x 5 jest workers, pushed the shared cgroup past its `MemoryHigh`, and left the Qalatra MCP server
+stalled in `D` state — POSTs to `:3457/mcp` timed out and the box read as "not responding" at load
+37.9, with `oom_kill 0`, no failed unit, and SSH still fast. A gate that only had to test one repo
+took down the box everything else talks to.*
+
 ---
 
 ### Stage 3: Migration Path — nestled framework
