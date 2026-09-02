@@ -457,9 +457,16 @@ For repos where `{CONFIG.framework}` = `nestled` and the diff shows generated fi
 
 1. `cd {CONFIG.repo_path} && git checkout <branchName>`
 2. `pnpm db-update`
-3. `npx nx build api` — verify compilation
+3. **Start** the API (`npx nx serve api`) and wait for it to boot — **not** `nx build api`.
+   `serve` runs the build target anyway (Nx `dependsOn: ["build"]`), so compilation is still verified;
+   the difference is that only a *running* app writes `api-schema.graphql`. That file is code-first
+   (`autoSchemaFile`) and is emitted when `GraphQLModule` initialises — a build compiles without ever
+   bootstrapping, so it cannot regenerate it. The `GraphQLModule` route-mapping log = schema written.
    - If TS errors in agent-written code → inject error to session, wait for `ready`, pull, re-run from step 2
-4. If `{CONFIG.sdk_command}` is set → run it (e.g. `pnpm sdk`)
+4. If `{CONFIG.sdk_command}` is set → run it (e.g. `pnpm sdk`) — **after** the boot, then stop the API.
+   `db-update` ran its own sdk pass at step 2, before the app started, against the schema already on
+   disk. This second run is the one that sees the regenerated types; without it, codegen resolves
+   fragments against a stale schema.
 5. **Inspect the regen diff before committing.** If db-update *reverted* something the agent hand-added to a generated file (e.g. a new `@Field` on a generated model class), do **not** commit the wipe and do **not** keep the hand edit — both lose: committing breaks the feature, keeping it means the next regen silently deletes it. This is an architecture problem, not a codegen artifact: `git checkout` the reverted file, then inject a rework pointing the session at the repo's codegen-safe pattern for computed fields (nestled: an extension resolver — `@Resolver(() => Model)` + `@ResolveField` in a custom plugin, e.g. `user-extension.resolver.ts`). Wait for `ready`, pull, re-run from step 2.
 6. `git add -A && git commit -m "chore: regenerate codegen artifacts" && git push`
 7. If files were changed → inject: *"I ran pnpm db-update locally and pushed updated generated artifacts to the branch. Please run git pull to sync your working copy."* Then poll `get_state` until session moves to `running`.
@@ -510,9 +517,14 @@ Docker credentials (all nestled projects): user=`prisma`, password=`prisma`, db=
 8. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm prisma migrate dev --name <slug>`
    - Drift detected → `DATABASE_URL="$LOCAL_DATABASE_URL" PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="Yes" pnpm prisma migrate reset --force` then retry
 9. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm db-update`
-10. `DATABASE_URL="$LOCAL_DATABASE_URL" npx nx build api` — verify
+10. **Start** the API: `DATABASE_URL="$LOCAL_DATABASE_URL" npx nx serve api` — wait until
+    `api-schema.graphql` contains the new field. **Not** `nx build api`: `serve` runs the build target
+    anyway (`dependsOn: ["build"]`) so compilation is still verified, but only a running app emits the
+    code-first schema — and without it step 11 has nothing new to read.
     - TS errors → inject to session, wait for `ready`, pull, re-run from step 9
-11. If `{CONFIG.sdk_command}` is set → run it (same `DATABASE_URL=` prefix)
+11. If `{CONFIG.sdk_command}` is set → run it (same `DATABASE_URL=` prefix) — **after** the boot, then
+    stop the API. `db-update` already ran an sdk pass at step 9, against the pre-migration schema;
+    this is the run that picks up the new field.
 12. **Stop Docker:** `docker compose -f {CONFIG.repo_path}/.dev/docker-compose.yml down`
 13. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
 14. Inject: *"I ran prisma migrate dev and regenerated artifacts locally and pushed to the branch. Please run git pull to sync your working copy."* → verify `running`
