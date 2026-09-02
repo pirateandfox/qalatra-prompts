@@ -443,8 +443,8 @@ git diff origin/{CONFIG.base_branch}...origin/<branchName> -- schema.prisma
 
 | Condition | Path |
 |---|---|
-| No generated files, no schema changes | Open PR directly |
-| Generated files hand-edited OR schema annotation-only changes (`///` lines only) | Codegen reconciliation |
+| No generated files, no Prisma changes, and no server-side GraphQL surface changes | Open PR directly |
+| Generated files hand-edited, schema annotation-only changes (`///` lines only), GraphQL resolver/DTO/decorator changes, or SDK `.graphql` changes | Codegen reconciliation |
 | Schema structural changes (new/removed model or field) | Migration path |
 
 **Non-nestled frameworks:** See framework section in `pipeline-architecture.md`. If the repo's framework has no defined reconciliation path, open PR directly (no code generation needed).
@@ -453,32 +453,29 @@ git diff origin/{CONFIG.base_branch}...origin/<branchName> -- schema.prisma
 
 ### Stage 3: Codegen Reconciliation — nestled framework
 
-For repos where `{CONFIG.framework}` = `nestled` and the diff shows generated file edits or annotation-only schema changes.
+For repos where `{CONFIG.framework}` = `nestled` and the diff can change generated artifacts or
+the code-first GraphQL surface.
 
 1. `cd {CONFIG.repo_path} && git checkout <branchName>`
 2. `pnpm db-update`
-3. **Start** the API (`npx nx serve api`, backgrounded — see the boot recipe in **Stage 3: Migration
-   Path** below; it is `continuous: true` and will hang a foreground run) and wait for it to boot —
-   **not** `nx build api`.
-   `serve` runs the build target anyway (Nx `dependsOn: ["build"]`), so compilation is still verified;
-   the difference is that only a *running* app writes `api-schema.graphql`. That file is code-first
-   (`autoSchemaFile`) and is emitted when `GraphQLModule` initialises — a build compiles without ever
-   bootstrapping, so it cannot regenerate it. The `GraphQLModule` route-mapping log = schema written.
+   This is the complete artifact contract: Prisma + Nestled generators → a real API bootstrap that
+   rewrites `api-schema.graphql` → typed SDK generation. It detects healthy `nx serve api` and
+   `sdk:watch` processes in this exact workspace and reuses them; otherwise it uses a direct,
+   one-shot API process on an ephemeral port against a disposable local database. It never starts a
+   second `nx serve api`, never deliberately creates a second SDK writer, and stops only resources
+   it started.
    - If TS errors in agent-written code → inject error to session, wait for `ready`, pull, re-run from step 2
-4. If `{CONFIG.sdk_command}` is set → run it (e.g. `pnpm sdk`) — **after** the boot, then stop the API.
-   `db-update` ran its own sdk pass at step 2, before the app started, against the schema already on
-   disk. This second run is the one that sees the regenerated types; without it, codegen resolves
-   fragments against a stale schema.
-5. **Inspect the regen diff before committing.** If db-update *reverted* something the agent hand-added to a generated file (e.g. a new `@Field` on a generated model class), do **not** commit the wipe and do **not** keep the hand edit — both lose: committing breaks the feature, keeping it means the next regen silently deletes it. This is an architecture problem, not a codegen artifact: `git checkout` the reverted file, then inject a rework pointing the session at the repo's codegen-safe pattern for computed fields (nestled: an extension resolver — `@Resolver(() => Model)` + `@ResolveField` in a custom plugin, e.g. `user-extension.resolver.ts`). Wait for `ready`, pull, re-run from step 2.
-6. `git add -A && git commit -m "chore: regenerate codegen artifacts" && git push`
-7. If files were changed → inject: *"I ran pnpm db-update locally and pushed updated generated artifacts to the branch. Please run git pull to sync your working copy."* Then poll `get_state` until session moves to `running`.
+3. **Inspect the regen diff before committing.** If db-update *reverted* something the agent hand-added to a generated file (e.g. a new `@Field` on a generated model class), do **not** commit the wipe and do **not** keep the hand edit — both lose: committing breaks the feature, keeping it means the next regen silently deletes it. This is an architecture problem, not a codegen artifact: `git checkout` the reverted file, then inject a rework pointing the session at the repo's codegen-safe pattern for computed fields (nestled: an extension resolver — `@Resolver(() => Model)` + `@ResolveField` in a custom plugin, e.g. `user-extension.resolver.ts`). Wait for `ready`, pull, re-run from step 2.
+4. `git add -A && git commit -m "chore: regenerate codegen artifacts" && git push`
+5. If files were changed → inject: *"I ran pnpm db-update locally and pushed updated generated artifacts to the branch. Please run git pull to sync your working copy."* Then poll `get_state` until session moves to `running`.
    - **CRITICAL:** `injected: true` can be a false positive. Always verify state changes to `running`. If not, retry inject. Do NOT skip inject and call `create_pr` directly.
    - **Do NOT** mention "create the PR" in the inject message — PR is always created via `claude_session_create_pr`
    - If db-update produced no changes → skip inject
-8. Open the PR via the canonical **Stage 3: Open PR** procedure (`create_pr` → resolve the PR on GitHub → report branch/PR to FlightDesk with `flightdesk task update`). Never stop at `create_pr`.
-9. `git checkout {CONFIG.base_branch}`
+6. Open the PR via the canonical **Stage 3: Open PR** procedure (`create_pr` → resolve the PR on GitHub → report branch/PR to FlightDesk with `flightdesk task update`). Never stop at `create_pr`.
+7. `git checkout {CONFIG.base_branch}`
 
-**NX daemon troubleshooting:** If `nx build` hangs: `pkill -f "nx serve api"; pkill -f "nx daemon"; npx nx reset`
+**NX daemon troubleshooting:** If the isolated build hangs and no developer watcher is running:
+`pnpm nx reset`, then rerun `pnpm db-update`. Never use a workspace-wide `pkill` as cleanup.
 
 **Cap nx parallelism — the boxes are small and shared.** Agent boxes are 4–6 vCPU, and every
 `claude -p` agent shares one cgroup with the Qalatra server, so an uncapped test run starves the
@@ -504,58 +501,55 @@ For repos where `{CONFIG.framework}` = `nestled` and the diff shows structural s
 
 Docker credentials (all nestled projects): user=`prisma`, password=`prisma`, db=`prisma`
 
-1. Detect port 5432: `docker ps --filter "publish=5432" --format '{{.Names}}'`
-2. If something running → get compose file: `docker inspect <name> --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'` → stop it
-3. Start target: `docker compose -f {CONFIG.repo_path}/.dev/docker-compose.yml up -d postgres`
-4. Wait: `until docker exec $(docker ps --filter "publish=5432" --format '{{.Names}}') pg_isready -U prisma; do sleep 2; done`
-   - Collation mismatch fix: `docker exec <container> psql -U prisma -d prisma -c "ALTER DATABASE prisma REFRESH COLLATION VERSION;"`
-5. Define the local DB URL — **never edit `.env`**; the ambient env file stays untouched no matter what it points at:
+1. Record whether this repo's Postgres is already running:
+   `POSTGRES_WAS_RUNNING="$(docker compose -f {CONFIG.repo_path}/.dev/docker-compose.yml ps --status running -q postgres)"`
+2. Start this repo's Postgres: `docker compose -f {CONFIG.repo_path}/.dev/docker-compose.yml up -d postgres`
+3. Resolve the exact container and its configured host port — never assume 5432:
    ```bash
-   LOCAL_DATABASE_URL="postgresql://prisma:prisma@localhost:5432/prisma"
+   POSTGRES_CONTAINER="$(docker compose -f {CONFIG.repo_path}/.dev/docker-compose.yml ps -q postgres)"
+   POSTGRES_PORT="$(docker inspect --format '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}' "$POSTGRES_CONTAINER")"
+   until docker exec "$POSTGRES_CONTAINER" pg_isready -U prisma -d prisma; do sleep 2; done
    ```
-   Every DB-touching command below gets `DATABASE_URL="$LOCAL_DATABASE_URL"` prefixed inline. dotenv does not override already-set env vars, so the inline value always wins over whatever `.env` contains.
-6. **Hard gate:** the host in `$LOCAL_DATABASE_URL` must be `localhost` / `127.0.0.1`, and every migrate/db-update/build command below must carry the explicit `DATABASE_URL=` prefix. If a command would run without it → **hard stop**, flag `NEEDS_ATTENTION`. Never run `prisma migrate dev`/`migrate reset` against a remote host.
-7. `cd {CONFIG.repo_path} && git checkout <branchName>`
-8. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm prisma migrate dev --name <slug>`
-   - Drift detected → `DATABASE_URL="$LOCAL_DATABASE_URL" PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="Yes" pnpm prisma migrate reset --force` then retry
-9. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm db-update`
-10. **Start** the API: `DATABASE_URL="$LOCAL_DATABASE_URL" npx nx serve api` — **backgrounded**;
-    `serve` is `continuous: true` and never exits, so a foreground run hangs the pass forever:
-
-    ```bash
-    DATABASE_URL="$LOCAL_DATABASE_URL" npx nx serve api > /tmp/api-boot.log 2>&1 &
-    API_PID=$!
-    for i in $(seq 1 150); do                            # ~5 min ceiling
-      grep -q 'Nest application successfully started' /tmp/api-boot.log && break
-      sleep 2
-    done
-    # ... run {CONFIG.sdk_command} here, while or after the app has booted ...
-    kill "$API_PID" 2>/dev/null; pkill -f "nx serve api" 2>/dev/null
-    ```
-
-    Wait until `api-schema.graphql` contains the new field. **Not** `nx build api`: `serve` runs the build target
-    anyway (`dependsOn: ["build"]`) so compilation is still verified, but only a running app emits the
-    code-first schema — and without it step 11 has nothing new to read.
-    - TS errors → inject to session, wait for `ready`, pull, re-run from step 9
-11. If `{CONFIG.sdk_command}` is set → run it (same `DATABASE_URL=` prefix) — **after** the boot, then
-    stop the API. `db-update` already ran an sdk pass at step 9, against the pre-migration schema;
-    this is the run that picks up the new field.
-12. **Stop Docker:** `docker compose -f {CONFIG.repo_path}/.dev/docker-compose.yml down`
-13. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
-14. Inject: *"I ran prisma migrate dev and regenerated artifacts locally and pushed to the branch. Please run git pull to sync your working copy."* → verify `running`
+   - Collation mismatch fix: `docker exec <container> psql -U prisma -d prisma -c "ALTER DATABASE prisma REFRESH COLLATION VERSION;"`
+4. Define the local DB URL — **never edit `.env`**; the ambient env file stays untouched no matter what it points at:
+   ```bash
+   LOCAL_DATABASE_URL="postgresql://prisma:prisma@127.0.0.1:${POSTGRES_PORT}/prisma"
+   ```
+   Every DB-touching command below gets **both** `DATABASE_URL="$LOCAL_DATABASE_URL"` and
+   `DIRECT_URL="$LOCAL_DATABASE_URL"` prefixed inline; newer Prisma configs prefer `DIRECT_URL`.
+5. **Hard gate:** the resolved host must be `localhost` / `127.0.0.1`. If either URL would be
+   remote or omitted → **hard stop**, flag `NEEDS_ATTENTION`.
+6. `cd {CONFIG.repo_path} && git checkout <branchName>`
+7. `DATABASE_URL="$LOCAL_DATABASE_URL" DIRECT_URL="$LOCAL_DATABASE_URL" pnpm prisma migrate dev --name <slug>`
+   - Drift detected → use the same two URL prefixes plus
+     `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="Yes" pnpm prisma migrate reset --force`, then retry
+8. `DATABASE_URL="$LOCAL_DATABASE_URL" DIRECT_URL="$LOCAL_DATABASE_URL" pnpm db-update`
+   - `db-update` now owns the API schema refresh and final SDK generation. Do not follow it with a
+     second `nx serve api` or `pnpm sdk`.
+   - TS errors → inject to session, wait for `ready`, pull, re-run from step 8
+9. If `$POSTGRES_WAS_RUNNING` was empty, stop only this repo's Postgres service. If it was already
+   running, leave it alone.
+10. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
+11. Inject: *"I ran prisma migrate dev and regenerated artifacts locally and pushed to the branch. Please run git pull to sync your working copy."* → verify `running`
     - Same CRITICAL notes as codegen: verify state change, no PR mention, retry if needed
-15. Open the PR via the canonical **Stage 3: Open PR** procedure (`create_pr` → resolve the PR on GitHub → report branch/PR to FlightDesk with `flightdesk task update`). Never stop at `create_pr`.
-16. `git checkout {CONFIG.base_branch}`
+12. Open the PR via the canonical **Stage 3: Open PR** procedure (`create_pr` → resolve the PR on GitHub → report branch/PR to FlightDesk with `flightdesk task update`). Never stop at `create_pr`.
+13. `git checkout {CONFIG.base_branch}`
 
-**CRITICAL:** Never edit `.env` — the explicit `DATABASE_URL=` prefix replaces the old swap/restore approach. Always stop Docker. Never leave a local Postgres running.
+**CRITICAL:** Never edit `.env`. Prefix both Prisma URLs. Never stop a Postgres service that was
+already running before reconciliation.
 
-**Structural guard (newer nestled repos):** repos carrying the template's `prisma.config.ts` guard hard-fail `migrate dev`/`migrate reset` whenever the resolved `DATABASE_URL` host isn't localhost. If you see `BLOCKED: prisma migrate ...`, the guard fired and saved you — fix the `DATABASE_URL=` prefix on the command; never attempt to bypass or edit the guard.
+**Structural guard (newer nestled repos):** repos carrying the template's `prisma.config.ts` guard
+hard-fail `migrate dev`/`migrate reset` whenever the resolved `DIRECT_URL`/`DATABASE_URL` host
+isn't localhost. If you see `BLOCKED: prisma migrate ...`, the guard fired and saved you — fix both
+URL prefixes on the command; never attempt to bypass or edit the guard.
 
 ---
 
 ### Stage 3: Open PR — canonical PR-open procedure
 
-**Every** PR the pipeline opens runs this procedure: the direct path (session done, no reconciliation needed), the tail of Codegen Reconciliation (step 8), and the tail of the Migration Path (step 15). Opening a PR is not done until FlightDesk has been told about it.
+**Every** PR the pipeline opens runs this procedure: the direct path (session done, no
+reconciliation needed), the tail of Codegen Reconciliation (step 6), and the tail of the Migration
+Path (step 12). Opening a PR is not done until FlightDesk has been told about it.
 
 1. **Open it.**
    ```

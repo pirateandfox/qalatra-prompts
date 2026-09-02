@@ -193,7 +193,8 @@ One per physical machine/deployment. Contains:
 ## Known Frameworks
 
 ### `nestled`
-Applies to (active apps): biztobiz, mi-core, muzebook, flightdesk, cashcast, moceanic-ai, qalatra.com, travel-outlook
+Applies to (active apps): biztobiz, mi-core, muzebook, flightdesk, cashcast, moceanic-ai,
+qalatra.com, silvermouselive, travel-outlook
 
 Framework/template repos (nestled-based but not pipeline app targets): nestled, nestled-forms, nestled-template, nestled-dev-template
 
@@ -203,63 +204,46 @@ Post-session diff assessment:
 
 | Diff condition | Path |
 |---|---|
-| No generated files, no schema changes | Open PR directly |
-| Generated files hand-edited OR schema annotation-only changes | Codegen reconciliation |
+| No generated files, no Prisma changes, and no server-side GraphQL surface changes | Open PR directly |
+| Generated files hand-edited, schema annotation-only changes, GraphQL resolver/DTO/decorator changes, or SDK `.graphql` changes | Codegen reconciliation |
 | Schema structural changes (new/removed model or field) | Migration path |
 
 **Codegen reconciliation steps:**
 1. `git checkout <branchName>`
 2. `pnpm db-update`
-3. **Start** the API, wait for boot, run `{CONFIG.sdk_command}`, then stop it (see below) — `build`
-   alone is not enough. `api-schema.graphql` is code-first (`autoSchemaFile`) and is written only when
-   the app bootstraps, so a build can verify compilation but cannot regenerate the schema, and the sdk
-   pass inside `db-update` has already run against the stale one. `serve` runs the build target
-   (`dependsOn: ["build"]`), so nothing is lost by starting instead of building.
-4. If it fails with TS errors → inject error to session, wait for `ready`, pull, re-run
-5. `git add -A && git commit -m "chore: regenerate codegen artifacts" && git push`
-6. If files changed: inject "please run git pull" → verify session moves to `running`
-7. Open PR — canonical procedure: `claude_session_create_pr(session_id)` → resolve the PR on GitHub → `flightdesk task update <taskId> --branch ... --pr-url ... --pr-number ...` (+ `--status PR_OPEN` if FD hasn't advanced)
-8. `git checkout <base_branch>`
-
-**Booting the API (both paths, nestled + code-first GraphQL).** `nx serve api` is `continuous: true` —
-it never exits on its own, so it must be backgrounded and killed, never run in the foreground. This is
-why an earlier version of this doc said "use `build` not `serve`"; the hang was real, but building
-silently skips the schema regeneration the sdk step depends on. Correct shape:
-
-```bash
-npx nx serve api > /tmp/api-boot.log 2>&1 &          # continuous: true — never run it in the foreground
-API_PID=$!
-for i in $(seq 1 150); do                            # ~5 min ceiling
-  grep -q 'Nest application successfully started' /tmp/api-boot.log && break
-  sleep 2
-done
-# ... run {CONFIG.sdk_command} here, while or after the app has booted ...
-kill "$API_PID" 2>/dev/null; pkill -f "nx serve api" 2>/dev/null
-```
+   This is the whole artifact contract: generators → a real API bootstrap that rewrites the
+   code-first `api-schema.graphql` → typed SDK generation. It reuses healthy API/SDK watchers in
+   the same workspace or runs isolated one-shot replacements; it never starts a second
+   `nx serve api` and owns cleanup for everything it starts.
+3. If it fails with TS errors → inject error to session, wait for `ready`, pull, re-run
+4. `git add -A && git commit -m "chore: regenerate codegen artifacts" && git push`
+5. If files changed: inject "please run git pull" → verify session moves to `running`
+6. Open PR — canonical procedure: `claude_session_create_pr(session_id)` → resolve the PR on GitHub → `flightdesk task update <taskId> --branch ... --pr-url ... --pr-number ...` (+ `--status PR_OPEN` if FD hasn't advanced)
+7. `git checkout <base_branch>`
 
 **Migration path steps:**
-1. Detect port 5432: `docker ps --filter "publish=5432" --format '{{.Names}}'`
-2. Stop anything running (get compose file via `docker inspect`)
-3. Start: `docker compose -f {repo}/.dev/docker-compose.yml up -d postgres`
-4. Wait: `until docker exec $(docker ps ...) pg_isready -U prisma; do sleep 2; done`
-5. Define `LOCAL_DATABASE_URL="postgresql://prisma:prisma@localhost:5432/prisma"` — **never edit `.env`.** Every DB-touching command below is prefixed inline with `DATABASE_URL="$LOCAL_DATABASE_URL"`. **Hard gate: never run Prisma migrate dev/reset against a non-localhost host.**
-6. `git checkout <branchName>`
-7. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm prisma migrate dev --name <slug>`
-   - If drift detected: `DATABASE_URL="$LOCAL_DATABASE_URL" PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="Yes" pnpm prisma migrate reset --force` then retry
-8. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm db-update`
-9. **Start** the API (`DATABASE_URL="$LOCAL_DATABASE_URL" npx nx serve api`), wait for boot, then run
-   `{CONFIG.sdk_command}` with the same prefix, then stop it — see the boot recipe below. Not `build`:
-   only a running app emits `api-schema.graphql`, and without it the sdk pass has no new field to see.
-   (Inject errors to session if any.)
-10. Stop Docker: `docker compose -f {repo}/.dev/docker-compose.yml down`
-11. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
-12. Inject "please run git pull" → verify `running`
-13. Open PR — canonical procedure: `claude_session_create_pr(session_id)` → resolve the PR on GitHub → `flightdesk task update <taskId> --branch ... --pr-url ... --pr-number ...` (+ `--status PR_OPEN` if FD hasn't advanced)
-14. `git checkout <base_branch>`
+1. Record whether this repo's Postgres service is already running, then start that service.
+2. Resolve its container with `docker compose ... ps -q postgres` and its configured host port
+   with `docker inspect`; never assume port 5432.
+3. Define `LOCAL_DATABASE_URL="postgresql://prisma:prisma@127.0.0.1:${POSTGRES_PORT}/prisma"`
+   without editing `.env`.
+4. **Hard gate:** the URL must be local, and both `DATABASE_URL` and `DIRECT_URL` are explicitly
+   set to it on every Prisma command (newer configs prefer `DIRECT_URL`).
+5. `git checkout <branchName>`
+6. `DATABASE_URL="$LOCAL_DATABASE_URL" DIRECT_URL="$LOCAL_DATABASE_URL" pnpm prisma migrate dev --name <slug>`
+   - If drift is detected, use the same URLs on the approved local reset, then retry.
+7. `DATABASE_URL="$LOCAL_DATABASE_URL" DIRECT_URL="$LOCAL_DATABASE_URL" pnpm db-update`
+   — no separate API or SDK step follows it.
+8. Stop Postgres only if this path started it; preserve a pre-existing dev service.
+9. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
+10. Inject "please run git pull" → verify `running`
+11. Open PR — canonical procedure: `claude_session_create_pr(session_id)` → resolve the PR on GitHub → `flightdesk task update <taskId> --branch ... --pr-url ... --pr-number ...` (+ `--status PR_OPEN` if FD hasn't advanced)
+12. `git checkout <base_branch>`
 
 Newer nestled repos also carry a structural guard in `prisma.config.ts` that hard-fails `migrate dev`/`migrate reset` against any non-localhost host. A `BLOCKED: prisma migrate ...` error means the guard fired — fix the URL prefix, never bypass it.
 
-**NX daemon troubleshooting:** If `nx build` hangs: `pkill -f "nx serve api"; pkill -f "nx daemon"; npx nx reset`
+**NX daemon troubleshooting:** If the isolated build hangs and no developer watcher is running,
+run `pnpm nx reset` and rerun `pnpm db-update`. Do not kill workspace processes by pattern.
 
 Docker credentials (all nestled projects): user=`prisma`, password=`prisma`, db=`prisma`
 
