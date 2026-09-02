@@ -457,7 +457,9 @@ For repos where `{CONFIG.framework}` = `nestled` and the diff shows generated fi
 
 1. `cd {CONFIG.repo_path} && git checkout <branchName>`
 2. `pnpm db-update`
-3. **Start** the API (`npx nx serve api`) and wait for it to boot — **not** `nx build api`.
+3. **Start** the API (`npx nx serve api`, backgrounded — see the boot recipe in **Stage 3: Migration
+   Path** below; it is `continuous: true` and will hang a foreground run) and wait for it to boot —
+   **not** `nx build api`.
    `serve` runs the build target anyway (Nx `dependsOn: ["build"]`), so compilation is still verified;
    the difference is that only a *running* app writes `api-schema.graphql`. That file is code-first
    (`autoSchemaFile`) and is emitted when `GraphQLModule` initialises — a build compiles without ever
@@ -517,8 +519,21 @@ Docker credentials (all nestled projects): user=`prisma`, password=`prisma`, db=
 8. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm prisma migrate dev --name <slug>`
    - Drift detected → `DATABASE_URL="$LOCAL_DATABASE_URL" PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="Yes" pnpm prisma migrate reset --force` then retry
 9. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm db-update`
-10. **Start** the API: `DATABASE_URL="$LOCAL_DATABASE_URL" npx nx serve api` — wait until
-    `api-schema.graphql` contains the new field. **Not** `nx build api`: `serve` runs the build target
+10. **Start** the API: `DATABASE_URL="$LOCAL_DATABASE_URL" npx nx serve api` — **backgrounded**;
+    `serve` is `continuous: true` and never exits, so a foreground run hangs the pass forever:
+
+    ```bash
+    DATABASE_URL="$LOCAL_DATABASE_URL" npx nx serve api > /tmp/api-boot.log 2>&1 &
+    API_PID=$!
+    for i in $(seq 1 150); do                            # ~5 min ceiling
+      grep -q 'Nest application successfully started' /tmp/api-boot.log && break
+      sleep 2
+    done
+    # ... run {CONFIG.sdk_command} here, while or after the app has booted ...
+    kill "$API_PID" 2>/dev/null; pkill -f "nx serve api" 2>/dev/null
+    ```
+
+    Wait until `api-schema.graphql` contains the new field. **Not** `nx build api`: `serve` runs the build target
     anyway (`dependsOn: ["build"]`) so compilation is still verified, but only a running app emits the
     code-first schema — and without it step 11 has nothing new to read.
     - TS errors → inject to session, wait for `ready`, pull, re-run from step 9

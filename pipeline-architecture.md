@@ -210,12 +210,32 @@ Post-session diff assessment:
 **Codegen reconciliation steps:**
 1. `git checkout <branchName>`
 2. `pnpm db-update`
-3. `npx nx build api` — verify compilation (use `build` not `serve`)
-4. If build fails with TS errors → inject error to session, wait for `ready`, pull, re-run
+3. **Start** the API, wait for boot, run `{CONFIG.sdk_command}`, then stop it (see below) — `build`
+   alone is not enough. `api-schema.graphql` is code-first (`autoSchemaFile`) and is written only when
+   the app bootstraps, so a build can verify compilation but cannot regenerate the schema, and the sdk
+   pass inside `db-update` has already run against the stale one. `serve` runs the build target
+   (`dependsOn: ["build"]`), so nothing is lost by starting instead of building.
+4. If it fails with TS errors → inject error to session, wait for `ready`, pull, re-run
 5. `git add -A && git commit -m "chore: regenerate codegen artifacts" && git push`
 6. If files changed: inject "please run git pull" → verify session moves to `running`
 7. Open PR — canonical procedure: `claude_session_create_pr(session_id)` → resolve the PR on GitHub → `flightdesk task update <taskId> --branch ... --pr-url ... --pr-number ...` (+ `--status PR_OPEN` if FD hasn't advanced)
 8. `git checkout <base_branch>`
+
+**Booting the API (both paths, nestled + code-first GraphQL).** `nx serve api` is `continuous: true` —
+it never exits on its own, so it must be backgrounded and killed, never run in the foreground. This is
+why an earlier version of this doc said "use `build` not `serve`"; the hang was real, but building
+silently skips the schema regeneration the sdk step depends on. Correct shape:
+
+```bash
+npx nx serve api > /tmp/api-boot.log 2>&1 &          # continuous: true — never run it in the foreground
+API_PID=$!
+for i in $(seq 1 150); do                            # ~5 min ceiling
+  grep -q 'Nest application successfully started' /tmp/api-boot.log && break
+  sleep 2
+done
+# ... run {CONFIG.sdk_command} here, while or after the app has booted ...
+kill "$API_PID" 2>/dev/null; pkill -f "nx serve api" 2>/dev/null
+```
 
 **Migration path steps:**
 1. Detect port 5432: `docker ps --filter "publish=5432" --format '{{.Names}}'`
@@ -227,7 +247,10 @@ Post-session diff assessment:
 7. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm prisma migrate dev --name <slug>`
    - If drift detected: `DATABASE_URL="$LOCAL_DATABASE_URL" PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION="Yes" pnpm prisma migrate reset --force` then retry
 8. `DATABASE_URL="$LOCAL_DATABASE_URL" pnpm db-update`
-9. `DATABASE_URL="$LOCAL_DATABASE_URL" npx nx build api` — verify (inject errors to session if any)
+9. **Start** the API (`DATABASE_URL="$LOCAL_DATABASE_URL" npx nx serve api`), wait for boot, then run
+   `{CONFIG.sdk_command}` with the same prefix, then stop it — see the boot recipe below. Not `build`:
+   only a running app emits `api-schema.graphql`, and without it the sdk pass has no new field to see.
+   (Inject errors to session if any.)
 10. Stop Docker: `docker compose -f {repo}/.dev/docker-compose.yml down`
 11. `git add -A && git commit -m "chore: add migration and regenerate artifacts" && git push`
 12. Inject "please run git pull" → verify `running`
