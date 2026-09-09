@@ -762,8 +762,8 @@ The agent that wrote the code must not be the only judge of whether it ships. Ev
 the *author* assessing its own work — a self-graded gate. After Step 6, before declaring QA_READY,
 an **independent verifier with fresh context** must sign off in writing. This is a different failure
 mode from the mechanical gates: the gates check *facts* (threads resolved, CI green); the verifier
-checks *judgment* (is the fix actually correct, complete, and free of new bugs?). The door is never
-the verifier.
+checks *judgment* (is the fix actually correct, complete, safe, and free of new bugs?). The door is
+never the verifier.
 
 **Skip-if-unchanged:** record the verified head SHA with each `MERGE` verdict. If `git rev-parse
 origin/<branchName>` still equals the last verified SHA, the diff hasn't changed — reuse the prior
@@ -786,7 +786,7 @@ VERDICT=$(claude -p "You are an INDEPENDENT reviewer. The author of this PR is b
 shipping; your job is to find concrete reasons it should NOT merge. Trust nothing in the author's
 description — verify every claim against the actual diff and current code. Decide MERGE or
 NEEDS_WORK and return ONLY JSON:
-{\"verdict\":\"MERGE|NEEDS_WORK\",\"blocking\":[{\"file\":\"\",\"line\":0,\"issue\":\"\",\"evidence\":\"\"}],\"summary\":\"\"}
+{\"verdict\":\"MERGE|NEEDS_WORK\",\"blocking\":[{\"file\":\"\",\"line\":0,\"kind\":\"bug|scope|security\",\"issue\":\"\",\"evidence\":\"\"}],\"summary\":\"\"}
 
 Check, against the CURRENT head only:
 1. SCOPE COVERAGE (do this first, explicitly). Enumerate EVERY discrete requirement in the SPEC and
@@ -797,9 +797,30 @@ Check, against the CURRENT head only:
    from the branch name) routinely ship the headline fix and silently drop a secondary requirement —
    a requested toggle, a second view, an acceptance criterion. If PLAN is empty AND the SPEC implies
    more than the diff delivers, flag the missing scope and that no plan was committed to verify against.
-2. Real bugs, security holes, broken edge cases, or data-loss risk introduced by THIS diff.
-3. Claimed fixes — actually present in the current code, or merely asserted?
-4. Any Copilot/Claude review finding genuinely still unaddressed in the current head (ignore ones
+2. Real bugs, broken edge cases, or data-loss risk introduced by THIS diff.
+3. SECURITY REVIEW of this diff. Assume every path the diff adds is reachable by an untrusted caller
+   unless the diff itself proves otherwise. In the code THIS diff adds or touches, check:
+   - **Authz / authn** — a new resolver, route, mutation, webhook or job that reads or writes
+     user-scoped data with no ownership or tenant check; an existing check removed, weakened, or
+     routed around by a new path; a newly exposed GraphQL field with no field-level authz.
+   - **Injection** — `$queryRaw`/`$executeRaw` or query fragments assembled from input; shell/`exec`
+     built from input; unsanitized HTML or `dangerouslySetInnerHTML`.
+   - **Secrets** — credentials, tokens or keys introduced in source, test fixtures, seed data, log
+     lines, or error messages; a value moved out of env into committed code.
+   - **Exposure** — a `select`/fragment newly returning password hashes, tokens, internal ids, or
+     other-tenant rows; a debug or verbose path returning stack traces or whole records to clients.
+   - **Untrusted input reaching a sink** — SSRF via caller-supplied URLs, path traversal in file
+     handling, unvalidated redirects, deserialization of client data.
+   - **Dependencies** — a dependency added in this diff that is unpinned, typosquat-shaped, or
+     resolved from outside the registry.
+   **Severity floor — this is a merge gate, not a hardening audit.** Raise a security item as
+   `blocking` only when you can name the file, the untrusted input, and the concrete consequence.
+   Theoretical hardening, defense-in-depth preferences, and pre-existing issues this diff merely sits
+   near are **not** blocking — omit them entirely rather than mentioning them. A diff that touches no
+   trust boundary should produce no security findings at all; say nothing rather than manufacturing
+   one. Set `"kind":"security"` on each security item you do raise.
+4. Claimed fixes — actually present in the current code, or merely asserted?
+5. Any Copilot/Claude review finding genuinely still unaddressed in the current head (ignore ones
    the current code already handles — those are stale).
 Ignore style/nits. Only list issues you can point to with file + concrete evidence. None → verdict=MERGE.
 
