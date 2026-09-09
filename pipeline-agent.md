@@ -700,9 +700,21 @@ Reason through all inputs together:
 2. **Claude Code review:** Does the review flag any bugs, security issues, incorrect logic, missing edge cases, or significant functional gaps? Read the full text — do not rely on the pass/fail status alone. **Verify each flagged item against the *current* branch head before treating it as real.** Long-form reviews (the Claude review especially) are generated against the commit that existed when they ran, and go stale the moment a later commit addresses the finding — GitHub marks such threads `isOutdated`. A finding the current code already handles is *not* a real issue: reply on the thread noting it's already addressed and resolve it (Step 6), do **not** re-inject it into the session.
 3. **Unresolved comments:** Are there inline review comments or general PR comments that haven't been addressed in a follow-up commit or reply?
 4. **Configured quality gates:** If the repo defines a coverage target such as `new_code_coverage_target: 80%`, do the reports show the target was met for changed/new code? If the target cannot be measured, is that a CI/configuration gap that must be surfaced? If the PR adds new behavior but no tests, require tests unless the config explicitly exempts the task type.
+5. **Security self-audit of the diff.** Walk this list against the code the PR adds or changes — not the whole repo. If the diff touches a trust boundary, also confirm that boundary's *existing* protections still hold after the change. Unlike the verifier's gate (which has a severity floor), **this step flags freely** — an inject is cheap, a shipped auth hole is not.
+   - **Authorization** — every new resolver, route, mutation, webhook, job or admin action: is there an ownership *and* tenant/workspace scope check? Does a client-supplied id get used to fetch a record without scoping it to the caller (IDOR)? Was an existing guard removed, weakened, or bypassed by a new code path? Newly exposed GraphQL fields with no field-level authz?
+   - **Authentication & session** — endpoints added outside the authenticated path; webhook handlers that skip signature verification; JWT/token verification disabled or made optional; cookies missing `httpOnly`/`secure`/`sameSite`; tokens with no expiry.
+   - **Input validation** — new inputs without schema validation; `req.body`/args spread directly into a Prisma `create`/`update` (mass assignment); unbounded list queries or missing pagination caps; file uploads without type/size limits.
+   - **Injection** — `$queryRaw`/`$executeRaw` or query fragments built from input; shell/`exec` from input; `dangerouslySetInnerHTML` or unsanitized HTML; dynamic imports or template rendering from input.
+   - **Secrets** — credentials, API keys or tokens in source, test fixtures, seed data, migrations, or committed env files; secrets written to logs or returned in error messages; anything sensitive behind a client-exposed prefix (`VITE_`, `NEXT_PUBLIC_`, etc.) that ships in the browser bundle.
+   - **Data exposure** — a `select`/fragment newly returning password hashes, tokens, internal ids, PII, or other-tenant rows; stack traces or whole records returned to clients; PII written to logs.
+   - **Untrusted input reaching a sink** — SSRF from caller-supplied URLs, path traversal in file handling, unvalidated redirects, deserialization of client data.
+   - **Server/client boundary** — server-only modules, keys, or queries newly imported into client code.
+   - **Exposure surface** — CORS widened, a route made public, rate limiting absent on a new public or expensive endpoint.
+   - **Dependencies** — a dependency added in this diff that is unpinned, typosquat-shaped, unmaintained, or resolved from outside the registry.
 
 **What to flag:**
-- Bugs, security issues, incorrect logic
+- Bugs, incorrect logic
+- **Anything from the security self-audit above** — authorization gaps first; they are the highest-cost miss in this stack and the least likely to be caught by tests or by a reviewer skimming a diff
 - Missing required functionality explicitly stated in the spec **or plan** (any unimplemented acceptance criterion / DoD item — partial scope is blocking)
 - Anything flagged in the Claude Code review — optimizations, code quality improvements, edge cases, missing tests, performance concerns, unclear naming, anything the reviewer thought worth mentioning
 - Unresolved inline comments or review threads
