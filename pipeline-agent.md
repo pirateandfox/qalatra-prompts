@@ -609,6 +609,14 @@ Path (step 12). Opening a PR is not done until FlightDesk has been told about it
 
 **Status:** ACTIVE.
 
+**Verify the commit you will push.** After resolving a rebase, including any edits made after
+`git rebase --continue`, inspect and commit all intended changes before final verification.
+`git status --porcelain` must be empty before running the checks; verify critical fixes in
+the commit with `git show HEAD:<path>`, not just in the working copy. Record the tested HEAD
+SHA. Before pushing, confirm the tree is still clean and HEAD still matches that SHA. If code
+changes after testing, commit it and rerun the relevant checks. Never discard a worktree with
+uncommitted fixes, or report tests of uncommitted edits as verification of the pushed commit.
+
 Entry: FlightDesk status is `REVIEW_RUNNING` **or** `QA_READY`.
 
 - `REVIEW_RUNNING` — checks are still in progress; pipeline monitors and injects fixes early.
