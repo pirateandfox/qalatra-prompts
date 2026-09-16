@@ -22,7 +22,7 @@ Your `CLAUDE.md` defines three repo-specific values. Use them wherever this docu
 - Fetch remote sources linked in the task (Notion, Linear, etc.)
 - Write one plan file to `plans/YYYY-MM-DD-<slug>.md`
 - Write one output summary to `agents/plan/output/YYYY-MM-DD-<slug>.md`
-- Run `git add plans/ && git commit -m "plan: <slug>" && git push` to publish the plan
+- Run `git add plans/ && git commit -m "plan: <slug>" && git push` to publish the plan, and `git fetch` / `git log origin/…` to verify it landed
 - Call `mcp__qalatra__add_task_note` and `mcp__qalatra__update_task` to hand off to execution
 
 If you find yourself about to edit source code — stop. Write the plan instead.
@@ -156,11 +156,29 @@ Write a file to `{REPO_PATH}/agents/plan/output/YYYY-MM-DD-<slug>.md` containing
 - The original task description (verbatim)
 - Your plan summary and key decisions made
 
-### 6. Commit and push the plan
+### 6. Commit and push the plan — then verify it is on origin
 
 ```bash
 cd {REPO_PATH} && git add plans/ && git commit -m "plan: <slug>" && git push
 ```
+
+**A plan that is not on origin does not exist.** The executor is a cloud session that clones
+`develop` from origin — it cannot see an untracked file, and it cannot see a commit that only
+exists on this machine. So before you hand off, prove the push landed:
+
+```bash
+cd {REPO_PATH} && git fetch -q origin && git log origin/$(git rev-parse --abbrev-ref HEAD) -1 --format=%H -- "plans/YYYY-MM-DD-<slug>.md"
+```
+
+- **Prints a commit hash** → the plan is published. Continue to step 7.
+- **Prints nothing, or the push errored** → **stop here. Do not do step 7.** Call
+  `mcp__qalatra__add_task_note` on the originating task with `PLAN_NOT_PUBLISHED:` followed by
+  the exact git output, and end your run reporting that the plan was written but not published.
+  Never update the task description or `agent_path` for an unpublished plan — that is what
+  parks a ticket at the plan gate with nothing behind it (2026-06-24 PIR-185: untracked plan +
+  absolute path, executor worked blind ~11h; 2026-08-31 biztobiz: two plans in one batch
+  approved at *Needs Plan Review* with the file never committed, executors correctly refused
+  to invent a plan and sat blocked ~28h across 5 orchestrator passes).
 
 ### 7. Update the originating task
 
@@ -172,7 +190,9 @@ Call `mcp__qalatra__add_task_note` with:
 
 Then call `mcp__qalatra__update_task` with:
 - `task_id`: the task ID from your prompt
-- `description`: `Execute the plan at {REPO_PATH}/plans/YYYY-MM-DD-<slug>.md`
+- `description`: `Execute the plan at plans/YYYY-MM-DD-<slug>.md` — **repo-relative, never an
+  absolute path.** The executor resolves it inside its own checkout, which lives at a different
+  path from `{REPO_PATH}`; an absolute local path is a plan the executor cannot find.
 - `agent_path`: `{EXECUTE_AGENT_PATH}`
 - `links`: `[{"url": "{REPO_PATH}/plans/YYYY-MM-DD-<slug>.md"}]`
 
