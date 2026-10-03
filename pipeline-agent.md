@@ -350,7 +350,7 @@ gh pr view <prNumber> --repo {CONFIG.github_slug} --json state,statusCheckRollup
 
 **DISPATCHED — session has no branch, state is `ready`:**
 Read transcript: `claude_session_get_transcript({ session_id, last_n: 8 })`
-- Session asked a question or hit an unresolvable blocker → **relay the question to where the human is already looking.** If the source system has a conversational blocked state (Linear — see source-system overrides), post the question onto the *issue* (as the pipeline identity) + move it to that state; the Qalatra `update_task({ task_id, task_type: "task" })` inbox task is the **alert**, not where the question lives. Log `STAGE_3_NEEDS_HUMAN`. (A question must never die in a transcript only the bridge can read.)
+- Session asked a question or hit an unresolvable blocker → **relay the question to where the human is already looking.** If the source system has a conversational blocked state (see source-system overrides), post the question onto the *issue* (as the pipeline identity) + move it to that state; the Qalatra `update_task({ task_id, task_type: "task" })` inbox task is the **alert**, not where the question lives. Log `STAGE_3_NEEDS_HUMAN`. (A question must never die in a transcript only the bridge can read.)
 - Session reports completion without a branch → Session Assessment handler
 
 **Notes:**
@@ -682,7 +682,7 @@ gh api repos/{CONFIG.github_slug}/issues/{prNumber}/comments
 The Claude Code review is typically a review submitted by a bot (e.g. `claude[bot]` or a GitHub Actions actor). Read its full body. At this point the `claude-review` check has PASSED (meaning Claude's overall verdict was "looks good") — but a passing review often still contains suggestions, optimizations, and notes that FD did not inject because they were non-blocking. Read and act on them.
 
 **Step 2 — Read original spec AND the committed plan:**
-Fetch the source task (Notion/Linear/Asana) and extract the full task description and any requirements in the page body. **Also read the committed plan** (`git show origin/{CONFIG.base_branch}:agents/plan/plans/<plan-file>.md`, path from the source task's links / kickoff prompt) — the plan's acceptance criteria / Definition of Done is the authoritative scope contract, and is usually more explicit than the issue. If no plan was committed, note it: the author may have reconstructed scope blind, so scrutinize coverage harder below.
+Fetch the source task (Notion/Trello/Asana) and extract the full task description and any requirements in the page body. **Also read the committed plan** (`git show origin/{CONFIG.base_branch}:agents/plan/plans/<plan-file>.md`, path from the source task's links / kickoff prompt) — the plan's acceptance criteria / Definition of Done is the authoritative scope contract, and is usually more explicit than the issue. If no plan was committed, note it: the author may have reconstructed scope blind, so scrutinize coverage harder below.
 
 **Step 3 — Read repo quality gates:**
 Read `{CONFIG.config_path}` / `agents/pipeline-config.md` for configured quality requirements, especially:
@@ -771,7 +771,7 @@ been handled." For **every** open review thread on the PR (Copilot, Claude, othe
 **A QA_READY handoff requires zero unresolved review threads.** If a thread genuinely can't be
 resolved because it needs a *human* decision (not a code fix the agent can make), that is a
 `Blocked`-class signal — leave it unresolved, state why in the reply, and follow the source system's
-blocked/needs-human path (P&F: move the Linear issue to `Blocked` + inbox alert) rather than
+blocked/needs-human path rather than
 surfacing a half-reconciled PR as ready.
 
 ---
@@ -859,7 +859,7 @@ $REVIEW")
 
 **Sign-off is written evidence** (this is what makes the verdict auditable and seeds the
 trust-architecture track record): post the verifier's `summary` + verdict as a comment on the source
-task/issue (per source system — Linear `commentCreate`, Notion comment, etc.), clearly in the
+task/issue (per source system — Notion comment, Trello card comment, etc.), clearly in the
 verifier's voice (prefix `🔍 Independent verification — <verdict>:`). Then record `HEAD_SHA` as the
 verified SHA on the task.
 
@@ -880,24 +880,20 @@ you deliberately flip `auto_merge: false` and pay for a human gate to buy down f
 verifier's per-repo track record (and incident history) is the signal for *when* a repo has crossed
 that line (see trust-architecture).
 
-**Scope:** "verifier `MERGE` = approval, merge on it" is the **Linear flavor's** model
-(`linear-pipeline.md`). Other deployments keep their own approval gate even when `auto_merge: true`:
-Monroe is human-merge, and Biz to Biz auto-merges only on its `Ready for Production` status — the
-verifier is an *added* quality gate for them, **not** the merge trigger. The executable rule is
-Stage 4b step 1: skip the approval check only for Linear `auto_merge: true`; every other deployment
-reads its configured approval status.
+**Scope:** "verifier `MERGE` = approval, merge on it" is the Pirate & Fox model, which FlightDesk's
+dispatch preamble now runs (not this file). Deployments that use this file keep their own approval
+gate even when `auto_merge: true`: Monroe is human-merge, and Biz to Biz auto-merges only on its
+`Ready for Production` status — the verifier is an *added* quality gate for them, **not** the merge
+trigger. The executable rule is Stage 4b step 1: every deployment reads its configured approval
+status.
 
 ---
 
 **When Intelligence Check passes (mechanical gates green + zero unresolved threads + verifier `MERGE`) → QA_READY:**
 
-> **Does your source-system flavor doc override QA_READY routing?** Only the **Linear flavor with
-> `auto_merge: true`** does (`linear-pipeline.md` → Merge Policy): there the verifier `MERGE` verdict
-> *is* the approval, so **skip steps 3–5 below** (no `ready_for_testing` write, no review task), go
-> straight to Stage 4b, and keep the issue in the work-in-progress state — never a review state — if
-> the merge can't complete this pass. **Every other deployment uses the numbered steps below
-> unchanged**: Notion/Monroe and Biz to Biz both still write `ready_for_testing` and wait for their
-> configured approval status. Do not skip unless your own flavor doc explicitly says so.
+> **Every deployment uses the numbered steps below unchanged**: Notion/Monroe and Biz to Biz both
+> write `ready_for_testing` and wait for their configured approval status. Do not skip unless your
+> own flavor doc explicitly says so.
 
 1. If `{CONFIG.qa_reviewer_id}` is set → `update_task({ taskId, qaAssigneeId: "{CONFIG.qa_reviewer_id}" })`
 2. If `{CONFIG.source_field_preview_url}` is set → `get_preview_status({ taskId })` and write the returned URL to `{CONFIG.source_field_preview_url}` on the source task (same Notion update pattern as other fields). Skip silently if no URL is returned.
@@ -919,11 +915,9 @@ reads its configured approval status.
 On every tick, for tasks at `PR_OPEN`, `PREVIEW_READY`, `REVIEW_DONE`, `QA_READY`:
 
 1. **Check approval status in source system:**
-   **Skip this check only for the Linear flavor with `auto_merge: true`** (`linear-pipeline.md`),
-   where the verifier `MERGE` already *is* the approval → proceed to step 2. **All other deployments
-   do this check** — Notion/Monroe, Biz to Biz (whose gate is its `Ready for Production` status), and
-   any `auto_merge: false` repo: fetch source task and read the approval field. Compare to
-   `{CONFIG.source_status_approved}`.
+   **Every deployment does this check** — Notion/Monroe, Biz to Biz (whose gate is its
+   `Ready for Production` status), and any `auto_merge: false` repo: fetch source task and read the
+   approval field. Compare to `{CONFIG.source_status_approved}`.
    - Not approved → skip, `STAGE_4B_WAITING`
    - Approved → proceed
 
@@ -995,8 +989,7 @@ Log approved+merged: `STAGE_4B_MERGED` | waiting: `STAGE_4B_WAITING` | conflict:
    ran); `auto-merged` when it merged on verifier/`Approved` sign-off without Justin's manual review,
    `human-approved` when Justin set `Approved`. This is the compensating control that makes default
    auto-merge safe (after-the-fact visibility), **and** the primary source for the nightly fleet digest
-   each box emails to Shi (`shi/tools/fleet-alerting`) — never skip it on a successful merge. See
-   `linear-pipeline.md` for any P&F-specific notes.
+   each box emails to Shi (`shi/tools/fleet-alerting`) — never skip it on a successful merge.
 
 6. **Complete Qalatra task:** `complete_task(qalatra_task_id)`
 
@@ -1014,7 +1007,7 @@ Mid-pipeline writes to keep the team's task board in sync.
 |---|---|
 | Stage 3 entry: FD URL confirmed in `task.links` | Write FD URL to `{CONFIG.source_field_flightdesk_url}` |
 | Stage 3: PR open | Write PR URL to `{CONFIG.source_field_github_url}` (if configured) |
-| Stage 4 all-green (`QA_READY`) | Set `{CONFIG.source_field_status}` to `{CONFIG.source_status_ready_for_testing}`. **Skip only for the Linear flavor with `auto_merge: true`** — it merges straight to `Done` and must never write a review state (`In Review` is excluded from Linear discovery, so writing it orphans the issue — see `linear-pipeline.md`). Notion/Monroe and Biz to Biz still write it. |
+| Stage 4 all-green (`QA_READY`) | Set `{CONFIG.source_field_status}` to `{CONFIG.source_status_ready_for_testing}`. Notion/Monroe and Biz to Biz both write it. |
 | Stage 4b approval + dispatch | Set `{CONFIG.source_field_status}` to `{CONFIG.source_status_dispatched}` |
 
 Both are idempotent — always write.
@@ -1026,7 +1019,7 @@ Use `task.source_url`:
 | URL pattern | System |
 |---|---|
 | `notion.so/` | Notion |
-| `linear.app/` | Linear |
+| `linear.app/` | Skip — Linear is retired; never write to it |
 | `app.asana.com/` | Asana |
 | None / `flightdesk.dev/` | Skip |
 
@@ -1040,8 +1033,8 @@ If no source link → skip silently.
 
 ### The closing note is required, and it comes BEFORE the terminal state
 
-This applies to **every** source system — Linear, Notion, Trello, Qalatra, anything added later. The
-mechanics differ (a Linear comment, a Notion comment, a Trello card comment); the rule does not.
+This applies to **every** source system — Notion, Trello, Qalatra, anything added later. The
+mechanics differ (a Notion comment, a Trello card comment); the rule does not.
 
 **Order:** merge → delete branch → ship-log → archive session + FlightDesk task → **post the closing
 note** → *then* set the terminal state (`Done`, card moved to Done, etc.) **last**.
@@ -1067,8 +1060,8 @@ verifier jargon. On a client-visible board, also keep out pricing, estimates, an
 other clients — see the repo's own `pipeline-config.md` for deployment-specific wording rules.
 
 Source-system-specific mechanics (exact API call, identity to post as, state IDs) belong in that
-system's flavor doc — e.g. `linear-pipeline.md` → *Closeout sequence* — or in the repo's
-`pipeline-config.md`. The requirement and the ordering live here because they are universal.
+system's flavor doc or in the repo's `pipeline-config.md`. The requirement and the ordering live
+here because they are universal.
 
 ---
 
@@ -1098,7 +1091,7 @@ TS="$(TZ=America/Puerto_Rico date '+%Y-%m-%d-%H-%M')"   # never UTC, never read 
 Two rules, both non-negotiable:
 
 1. **Never take the run time from a tool response.** `next_run_at`, `last_run_at`, `ping.ts`, and
-   Linear/FlightDesk/GitHub ISO strings are **UTC by design** — Qalatra's scheduler columns are
+   FlightDesk/GitHub ISO strings are **UTC by design** — Qalatra's scheduler columns are
    deliberately UTC while its human-facing columns are local. Reaching for one of those instead of
    the shell clock names the log ~4h ahead of the real write time on a UTC-4 box. That mistake
    produced 44 misnamed logs across 5 repos between 2026-06-14 and 2026-07-29.

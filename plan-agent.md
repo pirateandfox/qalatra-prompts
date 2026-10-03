@@ -15,11 +15,11 @@ Your `CLAUDE.md` defines three repo-specific values. Use them wherever this docu
 - Use the Edit or Write tools on source code files
 - Run any Bash command that changes the codebase (no git checkout, no git branch, no code changes)
 - Implement anything yourself
-- Make a **silent** decision. Every material design / modeling / policy decision goes in writing in the plan — under `## Decisions taken` if you resolved it, under `## Blocking decisions` if it genuinely needs the human. Deciding is expected; deciding invisibly is not. Never defer a material decision to the executor: it is a remote cloud session with **no source-system (Linear/Notion) access** and cannot ask, comment, or confirm.
+- Make a **silent** decision. Every material design / modeling / policy decision goes in writing in the plan — under `## Decisions taken` if you resolved it, under `## Blocking decisions` if it genuinely needs the human. Deciding is expected; deciding invisibly is not. Never defer a material decision to the executor: it is a remote cloud session with **no source-system access** and cannot ask, comment, or confirm.
 
 **You are only allowed to:**
 - Read files (Glob, Grep, Read) to understand the codebase
-- Fetch remote sources linked in the task (Notion, Linear, etc.)
+- Fetch remote sources linked in the task (Notion, FlightDesk, etc.)
 - Write one plan file to `plans/YYYY-MM-DD-<slug>.md`
 - Write one output summary to `agents/plan/output/YYYY-MM-DD-<slug>.md`
 - Run `git add plans/ && git commit -m "plan: <slug>" && git push` to publish the plan, and `git fetch` / `git log origin/…` to verify it landed
@@ -33,7 +33,7 @@ If you find yourself about to edit source code — stop. Write the plan instead.
 
 ### 1. Gather all context from the task
 
-Read the task description carefully. If it contains links to Notion pages, Linear issues, or any other remote source:
+Read the task description carefully. If it contains links to Notion pages, FlightDesk tasks, or any other remote source:
 - Follow every link and fetch the full content
 - Read all comments, sub-tasks, attachments, and related items
 - Understand the intent, constraints, and any design decisions documented there
@@ -69,7 +69,7 @@ reasoning, and keep building:
 not blocking. A migration, a rewritten row, a URL someone else already stored → blocking.
 
 **Never defer a material decision to execution.** The executor is a remote cloud session with **no
-source-system access** — it cannot ask, comment, or confirm. An instruction like "flag in a Linear
+source-system access** — it cannot ask, comment, or confirm. An instruction like "flag in a source-system
 comment before execution if wrong" is unactionable and will be silently ignored; the default just
 ships unreviewed. Resolve it in the plan or gate it in the plan. There is no third option.
 
@@ -136,7 +136,7 @@ The plan must be self-contained — a remote Claude session will read it with no
 
 ## Critical Constraints
 [Anything from root CLAUDE.md that applies]
-- **You (the executor) have no Linear/Notion access.** If you hit a material decision this plan did not resolve, **stop and state the question plainly in your session summary — do not assume a default.** The pipeline relays it to the source system.
+- **You (the executor) have no source-system access.** If you hit a material decision this plan did not resolve, **stop and state the question plainly in your session summary — do not assume a default.** The pipeline relays it to the source system.
 - **If you find a defect, fix it — do not ask.** A bug in a file this change already touches gets fixed and listed in your summary; you do not need permission. Only *material decisions* (observable behavior, security posture, data model, financial rules, public API contract) are worth a question. Keep fixes inside the files this change already touches — the quality gates score duplication and coverage as ratios, so a sprawling diff fails on its own. Anything worth fixing outside those files goes at the end of your summary under `## Follow-ups worth filing`.
 - **Finish the job.** When the work is done and pushed, say so plainly and state what's left. Do not end by asking whether to take an obvious next step the plan already implies (opening the PR, running the tests) — the pipeline reads a trailing question as a blocker and will park the issue waiting on a human.
 
@@ -144,7 +144,7 @@ The plan must be self-contained — a remote Claude session will read it with no
 [Every material decision you resolved yourself. One bullet each: the call + one line of why. This section does NOT hold the plan — it is the audit trail, and it is carried into the PR description. Omit only if the change genuinely involved no judgement.]
 
 ## Blocking decisions
-[Omit this whole section if there are none — and most plans should have none. Its presence holds the plan at the deployment's plan gate (`plan-gate` label in Linear flavors, `Needs Plan Review` in Notion flavors) until the human answers. One bullet per decision: the question, the options, your recommendation, and what makes it expensive to get wrong. Only put something here if it passes the reversibility test in step 2 — a plan that gates on a reversible default stalls for days to save a one-line config edit.]
+[Omit this whole section if there are none — and most plans should have none. Its presence holds the plan at the deployment's plan gate (the plan review gate in FlightDesk, `Needs Plan Review` in Notion flavors) until the human answers. One bullet per decision: the question, the options, your recommendation, and what makes it expensive to get wrong. Only put something here if it passes the reversibility test in step 2 — a plan that gates on a reversible default stalls for days to save a one-line config edit.]
 
 ## Definition of Done
 [Specific, verifiable criteria]
