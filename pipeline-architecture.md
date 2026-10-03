@@ -65,10 +65,8 @@ incidents, and makes a genuinely inert monitor indistinguishable from a correctl
   (Trello deployments: `human_gate_lists`): the exact status values whose only remaining move is a
   human action. **If the field is absent, the back-off does not engage** and the monitor dispatches as
   it does today. Absence means "not yet classified," never "guess." Status vocabularies are not
-  portable across deployments: in the Linear flavor `Approved` is a *machine* turn (the pipeline merges
-  on it), so an issue resting there is a **bug signal** and must never be gate-eligible — while
-  Linear's actual human parking spot, `In Review`, is excluded from discovery and never enters the
-  monitor set at all.
+  portable across deployments: a status the pipeline itself acts on (e.g. an `Approved` it merges on)
+  is a *machine* turn, so an issue resting there is a **bug signal** and must never be gate-eligible.
 
 - **Keep a liveness floor of one dispatch per day**, satisfied by the day's first pass dispatching the
   freshly created daily task. Do not use a sub-daily floor: monitor tasks run with `agent_resume`, so
@@ -143,7 +141,7 @@ One file per code repo. Defines everything specific to that codebase:
 | `base_branch` | e.g. `develop`, `live` |
 | `flightdesk_project_id` | UUID |
 | `flightdesk_subprojects` | optional table (Monroe pattern) |
-| `source_system` | `notion` \| `linear` \| `asana` |
+| `source_system` | `notion` \| `asana` |
 | `notion_mcp_prefix` | e.g. `mcp__claude_ai_Notion__` or `mcp__notion-monroe__` |
 | `notion_database_id` | UUID |
 | `notion_field_*` | field names for status, FlightDesk URL, GitHub URL |
